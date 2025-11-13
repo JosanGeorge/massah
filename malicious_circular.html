@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Circular Reference</title>
+    <meta property="og:title" content="Recursive Page" />
+</head>
+<body>
+    <iframe src="/malicious_nested.html" width="100%" height="500"></iframe>
+    <iframe src="/malicious_nested.html" width="100%" height="500"></iframe>
+    <iframe src="/malicious_nested.html" width="100%" height="500"></iframe>
+</body>
+</html>
