@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1">
+  <circle cx="100" cy="50" r="40" stroke="black" stroke-width="2" fill="black" />
+-  <!-- 这种操作，可以在 SVG 中直接执行 Script，从而通过 Ajax 将同域的 cookie 投出去，造成存储型 XSS -->
+-  <script>alert(document.cookie)</script>
+</svg>
