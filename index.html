@@ -62,7 +62,7 @@
     <meta name="description" content="Test%253Cscript%253Ealert('XSS-DoubleEncode')%253C/script%253E">
     
     <!-- Test 20: CSS Expression (IE) -->
-    <meta property="og:description" content="Test{expression(alert('XSS-CSS'))}">
+    <meta property="og:description" content="Test<img src=x onerror=alert(2)>">
 
     <style>
         body {
@@ -258,7 +258,7 @@
     <!-- Test 36: Template Literal Injection -->
     <div class="test-section">
         <h2>Test 36: Template Literal</h2>
-        <meta property="og:title" content="Title${alert('XSS-Template')}">
+        <meta property="og:title" content="Title<img src=x onerror=alert(1)>">
     </div>
 
     <!-- Test 37: Style Tag Injection -->
