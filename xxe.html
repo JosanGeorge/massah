@@ -1,0 +1,9 @@
+<!DOCTYPE html [
+  <!ENTITY xxe SYSTEM "file:///etc/passwd">
+]>
+<html>
+  <head>
+    <title>&xxe;</title>
+    <meta property="og:description" content="&xxe;" />
+  </head>
+</html>
