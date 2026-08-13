@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Arattai</title>
+</head>
+<body style="font-family:-apple-system,sans-serif;max-width:640px;margin:80px auto;text-align:center">
+  <h2>Your session expired. Please sign in again.</h2>
+
+  <!--
+    SECURITY TEST ARTIFACT ONLY.
+
+    This page intentionally has NO working login form and captures/exfiltrates nothing.
+    Its only purpose is to prove that Finding 2 (do-logout bypassing NavigationPolicy's
+    host allow-list) lets an attacker-controlled page replace the entire native window's
+    visible content. A real attacker would put a credential-harvesting form here instead -
+    do not build or deploy that part; the redirect itself is the finding.
+  -->
+  <p style="color:#b00;font-weight:bold">
+    SECURITY TEST ARTIFACT — if you are seeing this inside the Arattai app, Finding 2
+    (do-logout arbitrary main-frame navigation) has been reproduced. This is not a real
+    Arattai page and must never collect credentials.
+  </p>
+</body>
+</html>
