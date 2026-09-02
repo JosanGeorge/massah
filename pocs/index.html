@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arattai Mini-App WebView PoC — Cross-Client</title>
+  <link rel="stylesheet" href="css/poc.css">
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <h1>Arattai Mini-App WebView — Cross-Client PoC</h1>
+    <div class="subtitle">Authorized internal security research · 2026-09-02</div>
+    <div class="badge-row">
+      <span class="badge badge-critical">Critical</span>
+      <span class="badge badge-android">Android</span>
+      <span class="badge badge-ios">iOS</span>
+      <span class="badge badge-web">Web</span>
+      <span class="badge badge-desktop">Desktop</span>
+      <span class="badge badge-server">Server root cause</span>
+    </div>
+  </div>
+
+  <div class="info-box">
+    <strong>Scope</strong> — This page is an internal proof-of-concept for a security audit of Arattai's
+    Mini-App feature. It must only be used against test environments with explicit authorization.
+    The payload page (<code>miniapp.html</code>) actively collects and exfiltrates data to a collector
+    you configure in <code>js/collector-config.js</code>.
+  </div>
+
+  <h2>Attack Model</h2>
+  <p>
+    A malicious or compromised <strong>business registered on the Arattai platform</strong> configures its
+    Mini-App target URL to this PoC page. The server (<code>GetLinkAction.java</code>) returns the URL
+    without any host allow-list check. Every Arattai client then loads the URL into a JS-enabled
+    web-content container with insufficient origin isolation.
+  </p>
+
+  <h2>Trigger Steps</h2>
+  <ol class="steps">
+    <li><strong>Configure collector</strong> — edit <code>js/collector-config.js</code> and set <code>COLLECTOR_URL</code> to your listener (see <code>collector/README.md</code>).</li>
+    <li><strong>Host this folder</strong> — push to GitHub Pages or run <code>python -m http.server 8080</code>. Note your public URL.</li>
+    <li><strong>Register a Mini-App</strong> — in your Arattai test org, create a business Mini-App whose target URL is <code>https://&lt;your-host&gt;/miniapp.html</code>.</li>
+    <li><strong>Open the Mini-App</strong> — from any Arattai client. The payload executes automatically.</li>
+    <li><strong>Observe the collector</strong> — the payload POSTs a JSON beacon with fingerprint, cookies, storage contents, and probe results.</li>
+  </ol>
+
+  <hr>
+
+  <h2>Cross-Client Vulnerability Matrix</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Client</th>
+        <th>Severity</th>
+        <th>Title</th>
+        <th>Key Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>S0</td>
+        <td><span class="badge badge-server">Server</span></td>
+        <td><span class="badge badge-high">High</span></td>
+        <td>Format-only URL validation — any host/http accepted</td>
+        <td><code>BusinessMiniAppManager.java:108</code> · <code>GetLinkAction.java:55</code></td>
+      </tr>
+      <tr>
+        <td>A1</td>
+        <td><span class="badge badge-android">Android</span></td>
+        <td><span class="badge badge-high">High</span></td>
+        <td>Unvalidated server URL + <code>allowFileAccess=true</code> + <code>MIXED_CONTENT_ALWAYS_ALLOW</code></td>
+        <td><code>MiniAppDialogFragment.kt:2236,2250,2279</code></td>
+      </tr>
+      <tr>
+        <td>A2</td>
+        <td><span class="badge badge-android">Android</span></td>
+        <td><span class="badge badge-medium">Medium</span></td>
+        <td><code>intent: browser_fallback_url</code> re-loaded without validation</td>
+        <td><code>MiniAppDialogFragment.kt:2021–2031</code></td>
+      </tr>
+      <tr>
+        <td>I1</td>
+        <td><span class="badge badge-ios">iOS</span></td>
+        <td><span class="badge badge-medium">Medium</span></td>
+        <td>No <code>decidePolicyFor</code> — no scheme/host allow-list on WKWebView</td>
+        <td><code>BusinessMiniAppWebViewController.swift:275–291</code></td>
+      </tr>
+      <tr>
+        <td>W1</td>
+        <td><span class="badge badge-web">Web</span></td>
+        <td><span class="badge badge-critical">Critical</span></td>
+        <td>iframe <code>sandbox="allow-same-origin allow-scripts"</code> + no <code>frame-src</code> CSP</td>
+        <td><code>MiniAppViewer.vue:75</code> · <code>common.jspf:78</code></td>
+      </tr>
+      <tr>
+        <td>W2</td>
+        <td><span class="badge badge-web">Web</span></td>
+        <td><span class="badge badge-critical">Critical</span></td>
+        <td>Unauthenticated <code>postMessage</code> bridge — localStorage/sessionStorage/IDB cross-origin read</td>
+        <td><code>db-handler.js:15</code> · <code>idbmanager.js:96</code></td>
+      </tr>
+      <tr>
+        <td>W3</td>
+        <td><span class="badge badge-web">Web</span></td>
+        <td><span class="badge badge-medium">Medium</span></td>
+        <td>oEmbed unfurl iframes use same dangerous sandbox</td>
+        <td><code>unfurl-ui.js:535–573</code></td>
+      </tr>
+      <tr>
+        <td>D1</td>
+        <td><span class="badge badge-desktop">Desktop</span></td>
+        <td><span class="badge badge-high">High</span></td>
+        <td><code>setPermissionRequestHandler → callback(true)</code> — all permissions auto-granted</td>
+        <td><code>app_view.js:297</code></td>
+      </tr>
+      <tr>
+        <td>D2</td>
+        <td><span class="badge badge-desktop">Desktop</span></td>
+        <td><span class="badge badge-high">High</span></td>
+        <td><code>do-logout</code> IPC loads renderer-supplied URL, bypasses allow-list</td>
+        <td><code>main.js:1110</code></td>
+      </tr>
+      <tr>
+        <td>D3</td>
+        <td><span class="badge badge-desktop">Desktop</span></td>
+        <td><span class="badge badge-high">High</span></td>
+        <td>URL validator substring/prefix bypass — <code>isChatURL</code>/<code>isValidArattaiURL</code></td>
+        <td><code>urlValidator.js:33,44</code></td>
+      </tr>
+      <tr>
+        <td>D4</td>
+        <td><span class="badge badge-desktop">Desktop</span></td>
+        <td><span class="badge badge-medium">Medium</span></td>
+        <td>Nav guards on non-cancelable <code>did-navigate</code> events</td>
+        <td><code>arattai_view.js:116,155</code></td>
+      </tr>
+      <tr>
+        <td>D5</td>
+        <td><span class="badge badge-desktop">Desktop</span></td>
+        <td><span class="badge badge-low">Low</span></td>
+        <td>Favicon URL HTML-injection into tab-strip via <code>jQuery.html()</code></td>
+        <td><code>main_page.js:137</code></td>
+      </tr>
+      <tr>
+        <td>D6</td>
+        <td><span class="badge badge-desktop">Desktop</span></td>
+        <td><span class="badge badge-low">Low</span></td>
+        <td>SSRF via <code>get-unfurl-data</code> — scheme-only check, no host/IP filter</td>
+        <td><code>main.js:1484</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>Per-Client Expected PoC Outcomes</h2>
+
+  <h3>Android (<code>MiniAppDialogFragment</code> WebView)</h3>
+  <p>
+    The WebView loads <code>miniapp.html</code> with <code>allowFileAccess=true</code>,
+    <code>MIXED_CONTENT_ALWAYS_ALLOW</code>, and geolocation enabled.
+    Expected probe outcomes: JS exec ✓, fingerprint ✓, mixed-content load ✓ (HTTP image loads),
+    geolocation auto-granted (on API 30+ without permission dialog), file:// fetch attempted.
+    Beacon POSTed with full UA + environment.
+  </p>
+
+  <h3>iOS (WKWebView — <code>BusinessMiniAppWebViewController</code>)</h3>
+  <p>
+    JS runs in the WKWebView. No script-message-handler bridge exists, so impact is limited to
+    JS-in-origin phishing. Expected: JS exec ✓, fingerprint ✓. No auto-granted permissions (iOS
+    always prompts). Geolocation / media probes show "prompt shown" (SAFE row).
+  </p>
+
+  <h3>Web Client (<code>MiniAppViewer.vue</code> iframe)</h3>
+  <p>
+    The iframe loads with <code>sandbox="allow-same-origin allow-scripts allow-popups allow-forms"</code>.
+    JS runs. The <strong>postMessage bridge probe</strong> (W2) attempts to read <code>localStorage</code>
+    keys from the Arattai web shell via <code>db-handler.js</code>. If the storage iframe is present in
+    the parent window, captured values are included in the beacon.
+  </p>
+
+  <h3>Desktop (Electron — <code>source/app</code>)</h3>
+  <p>
+    The PoC page is loaded (via the Mini-App feature or via the URL-validator bypass chain) into the
+    chat <code>WebContentsView</code>. <code>setPermissionRequestHandler</code> auto-grants all
+    permissions. Expected: JS exec ✓, geolocation auto-granted ✓, microphone auto-granted ✓,
+    <code>DesktopModule</code> bridge listed if reachable. Beacon POSTed.
+  </p>
+
+  <hr>
+
+  <a class="badge badge-critical" href="miniapp.html" style="font-size:1rem;padding:10px 22px;border-radius:8px;display:inline-block;margin-bottom:8px;">
+    ▶ Open Payload Page (miniapp.html)
+  </a>
+  <p style="font-size:0.8rem;color:var(--na);">Set <code>COLLECTOR_URL</code> in <code>js/collector-config.js</code> first.</p>
+
+  <div class="footer">
+    Arattai Security Audit — Internal · Authorized use only · josan.g@zohocorp.com
+  </div>
+
+</div>
+</body>
+</html>
