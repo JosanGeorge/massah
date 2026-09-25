@@ -1,0 +1,10 @@
+{
+  "version": "1.0",
+  "type": "rich",
+  "provider_name": "Arattai unfurl iframe probe",
+  "provider_url": "PLACEHOLDER_BASE_URL",
+  "title": "Arattai unfurl iframe probe",
+  "width": 600,
+  "height": 209,
+  "html": "<iframe src=\"https://josangeorge.github.io/massah/unfurl-abuse/impact-frame.html\" width=\"600\" height=\"209\" frameborder=\"0\"></iframe>"
+}
